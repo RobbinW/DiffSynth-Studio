@@ -126,7 +126,9 @@ if __name__ == "__main__":
     accelerator = accelerate.Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         kwargs_handlers=[accelerate.DistributedDataParallelKwargs(find_unused_parameters=args.find_unused_parameters)],
+        log_with="wandb",
     )
+    accelerator.init_trackers(project_name="wanvideo_training", config=vars(args))
     dataset = UnifiedDataset(
         base_path=args.dataset_base_path,
         metadata_path=args.dataset_metadata_path,

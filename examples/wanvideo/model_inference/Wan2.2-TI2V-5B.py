@@ -7,10 +7,17 @@ from modelscope import dataset_snapshot_download
 pipe = WanVideoPipeline.from_pretrained(
     torch_dtype=torch.bfloat16,
     device="cuda",
+    # model_configs=[
+    #     ModelConfig(model_id="Wan-AI/Wan2.2-TI2V-5B", origin_file_pattern="models_t5_umt5-xxl-enc-bf16.pth"),
+    #     ModelConfig(model_id="Wan-AI/Wan2.2-TI2V-5B", origin_file_pattern="diffusion_pytorch_model*.safetensors"),
+    #     ModelConfig(model_id="Wan-AI/Wan2.2-TI2V-5B", origin_file_pattern="Wan2.2_VAE.pth"),
+    # ],
     model_configs=[
-        ModelConfig(model_id="Wan-AI/Wan2.2-TI2V-5B", origin_file_pattern="models_t5_umt5-xxl-enc-bf16.pth"),
-        ModelConfig(model_id="Wan-AI/Wan2.2-TI2V-5B", origin_file_pattern="diffusion_pytorch_model*.safetensors"),
-        ModelConfig(model_id="Wan-AI/Wan2.2-TI2V-5B", origin_file_pattern="Wan2.2_VAE.pth"),
+    ModelConfig(["/data/dex/Motus/pretrained_models/Wan2.2-TI2V-5B/diffusion_pytorch_model-00001-of-00003.safetensors",
+                 "/data/dex/Motus/pretrained_models/Wan2.2-TI2V-5B/diffusion_pytorch_model-00002-of-00003.safetensors",
+                 "/data/dex/Motus/pretrained_models/Wan2.2-TI2V-5B/diffusion_pytorch_model-00003-of-00003.safetensors"]),
+    ModelConfig(["/data/dex/Motus/pretrained_models/Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth"]),
+    ModelConfig(["/data/dex/Motus/pretrained_models/Wan2.2-TI2V-5B/Wan2.2_VAE.pth"]),
     ],
     tokenizer_config=ModelConfig(model_id="Wan-AI/Wan2.1-T2V-1.3B", origin_file_pattern="google/umt5-xxl/"),
 )

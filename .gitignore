@@ -2,6 +2,8 @@
 /models
 /scripts
 /diffusers
+wandb/
+*.mp4
 *.pkl
 *.safetensors
 *.pth
