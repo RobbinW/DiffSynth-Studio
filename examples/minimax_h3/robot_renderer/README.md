@@ -1,6 +1,6 @@
 # Native H3 robot renderer
 
-One bounded training recipe and one inference path. This replaces the earlier
+One native training recipe and one inference path. This replaces the earlier
 robot-specific silent-audio shell recipe; upstream general H3 examples are unchanged.
 It uses the official Diffusers H3 model/reference packing, not the legacy robot
 experiment loaders. No SolarRenderer control weights are loaded by this recipe.
@@ -12,14 +12,15 @@ experiment loaders. No SolarRenderer control weights are loaded by this recipe.
 | Setting | Default |
 |---|---|
 | Output clip | **158 total frames**, 24 fps |
-| Training budget | **1,000 optimizer updates** |
+| Training budget | **Continuous until a stop signal**; `steps` can set a finite budget |
 | Adapter | Attention Q/K/V/output only; rank=alpha=32; zero output initialization |
 | Frozen | H3 base, FFNs, text refiners, encoders, VAE |
-| Optimizer | FP32 AdamW; LR1e-5→1e-6, warmup50, betas0.9/0.95, eps1e-8, decay0.01 |
+| Optimizer | FP32 AdamW; warmup50, cosine LR1e-5→1e-6 through update1000, then hold1e-6; betas0.9/0.95, eps1e-8, decay0.01 |
 | Batch on32cards | SP8×DP4×accumulation2 =8 clips/update |
 | Loss | Video-only data-ward flow matching; optional preservation weight0.1, default0 |
-| DeCFG / inverse-CFG / extra inference CFG | Disabled; no extra conditional branch |
-| Validation | At0/25/50/100 and every100updates through1000;50 actual model evaluations |
+| DeCFG | Set `decfg_path` to the historical frozen Ref2VA adapter; active only in supervised training |
+| Inverse-CFG / extra inference CFG | Disabled |
+| Validation and checkpoint | At0/100/250 and every500updates;50 actual model evaluations |
 | Precision | BF16 trunk; original FP32 projection/time owners; FP32 task adapter/optimizer/loss; FP64 positions |
 
 The DCU loop uses separate FSDP and SP communicators over the same eight node ranks,
@@ -106,9 +107,11 @@ quality still need validation on the real robot data; the implementation alone
 does not establish that earlier regression is solved.
 
 The supplied controller launcher reuses the established container, Python and RCCL
-settings. It first prepares native caches across32 workers, then replicates only
-tensors the deterministic1000-update sampling schedule will read, and submits all
-four training workers. Every node retains the complete index; sampling is still
+settings. It first prepares native caches across32 workers, then replicates all training tensors for continuous runs (or only the exact scheduled
+tensors for a finite budget), and submits all four training workers.
+When DeCFG is configured, a full33B eight-card fixed-input probe must pass before
+submission: repeatable backward, reversible DeCFG switching, frozen adapter integrity
+and a discarded task-optimizer update. `--prepared` reuses completed preparation shards. Every node retains the complete index; sampling is still
 from the full manifest. Use a fresh remote root for each immutable input/config snapshot.
 
 ```bash
@@ -140,8 +143,11 @@ Use `--config path.json` to change the shared configuration and
 `--resume /runs/robot-h3/step_000100` to resume adapters, FP32 optimizer and RNGs.
 Validation exports full clips and PSNR as a supporting score. Inspect robot
 texture, motion, contacts and flicker alongside it; low supervised loss or PSNR
-alone does not select the best model. There is no automatic quality heuristic or
-unbounded continuation. Checkpoints include step0 and every validation update.
+alone does not select the best model. There is no automatic image-quality stopping heuristic. With `steps: null`, training
+continues until requested to stop. SIGTERM/SIGINT on a training worker requests a
+coordinated stop after the current update and saves the final checkpoint. Checkpoints
+include step0 and every validation update. The LR decay horizon is independent of
+the stopping budget and does not restart after update1000.
 
 Rollout manifest needs `id`, `reference` (initial image path), `proxy`, `width`,
 `height`, and `prompt`; no real target video is required:
@@ -185,3 +191,19 @@ torchrun --standalone --nproc_per_node=2 \
 The same check runs across32 cards with SP8/DP4. It compares gradients, clipping and
 three AdamW updates against a full unsharded reference, including a save/reload.
 Reduced-model numerical checks do not establish full33B training quality.
+
+## Training-only DeCFG
+
+Set `decfg_path` in the launch configuration to the same `model_ref2va.safetensors`
+used by the historical DeCFG run. The checkpoint has frozen rank64 branches over
+the trunk and text-refiner attention/MLP projections. QKV output rows are deinterleaved
+per head and SwiGLU output halves are swapped for the Diffusers layout. Scale is1;
+no base weights are merged or repeatedly added/subtracted. Only the new rank32
+attention task adapters are optimized and saved. DeCFG is off for baseline validation,
+all sampled videos, frozen-native audio trajectories and deployment.
+
+The repository default leaves the external checkpoint path unset; the cluster run
+records its explicit path and SHA256 in the qualification artifact. Adding DeCFG
+changes the training recipe and needs matched generation comparisons; it is not
+proof of improved perceptual quality. Historical124-frame/20-step results cannot
+be compared numerically to158-frame/50-step outputs without a shared evaluation protocol.

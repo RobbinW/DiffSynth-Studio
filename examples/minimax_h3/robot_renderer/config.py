@@ -10,11 +10,12 @@ from pathlib import Path
 class Config:
     frames: int = 158
     fps: int = 24
-    steps: int = 1000
+    steps: int | None = None
     rank: int = 32
     learning_rate: float = 1e-5
     minimum_learning_rate: float = 1e-6
     warmup: int = 50
+    lr_decay_steps: int = 1000
     accumulation: int = 2
     sequence_parallel: int = 8
     weight_decay: float = 0.01
@@ -24,7 +25,8 @@ class Config:
     seed: int = 42
     trajectory_seeds: tuple = (42, 2026)
     validation_seeds: tuple = (42, 2026, 31415)
-    validate_every: int = 100
+    validate_every: int = 500
+    decfg_path: str | None = None
 
     @classmethod
     def load(cls, path=None):
@@ -36,10 +38,10 @@ class Config:
     def lr(self, update):
         if update <= self.warmup:
             return self.learning_rate * update / self.warmup
-        progress = (update - self.warmup) / (self.steps - self.warmup)
+        progress = min(1.0, (update - self.warmup) / (self.lr_decay_steps - self.warmup))
         return self.minimum_learning_rate + 0.5 * (
             self.learning_rate - self.minimum_learning_rate
         ) * (1 + math.cos(math.pi * progress))
 
     def validate_at(self, update):
-        return update in (0, 25, 50, self.steps) or update % self.validate_every == 0
+        return update in (0, 100, 250, self.steps) or update % self.validate_every == 0

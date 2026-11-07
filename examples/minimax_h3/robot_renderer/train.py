@@ -1,9 +1,10 @@
-"""Bounded native H3 LoRA training; validation generates complete clips."""
+"""Native H3 LoRA training; validation generates complete clips."""
 
 import argparse
 import json
 from pathlib import Path
 import random
+import signal
 import time
 
 import numpy as np
@@ -17,6 +18,7 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.tensor import DTensor, distribute_tensor
 
 from .config import Config
+from .decfg import decfg_mode
 from .distributed import average_gradients, clip_gradients, primary, setup
 from .encode import Decoder
 from .media import read_index, read_video, resample, write_video
@@ -93,7 +95,23 @@ def main():
     config = Config.load(args.config)
     device, group, shard_group, dp_rank, dp_size = setup(config.sequence_parallel)
     torch.manual_seed(config.seed)
-    model = load_model(args.model, device, config.rank, group, shard=dist.is_initialized(), shard_group=shard_group)
+    stop_requested = False
+
+    def request_stop(signum, frame):
+        nonlocal stop_requested
+        stop_requested = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+
+    def stopping():
+        flag = torch.tensor(int(stop_requested), device=device)
+        if dist.is_initialized():
+            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+        return bool(flag.item())
+
+    model = load_model(args.model, device, config.rank, group, shard=dist.is_initialized(),
+                       shard_group=shard_group, decfg_path=config.decfg_path)
     parameters = list(adapter_parameters(model).values())
     optimizer = torch.optim.AdamW(parameters, lr=config.learning_rate,
                                  betas=(0.9, 0.95), eps=1e-8, weight_decay=config.weight_decay)
@@ -130,7 +148,9 @@ def main():
     validate(model, runtime, decoder, validation, cache, out, start, dp_rank, dp_size, config)
     if start == 0:
         save_checkpoint(model, optimizer, 0, out, config)
-    for update in range(start + 1, config.steps + 1):
+    update = start
+    while (config.steps is None or update < config.steps) and not stopping():
+        update += 1
         started = time.monotonic()
         optimizer.zero_grad(set_to_none=True)
         losses = []
@@ -149,14 +169,15 @@ def main():
                 with torch.no_grad(), without_adapter(model):
                     teacher = runtime.predict(model, prepared, video, audio, index)[0][0]
             torch.cuda.synchronize()
-            with torch.autograd.graph.save_on_cpu(pin_memory=True):
-                prediction = runtime.predict(model, prepared, video, audio, index)[0][0]
-            torch.cuda.synchronize()
-            nv = prepared["num_condition_video_rows"]
-            loss = video_loss(prediction[nv:], target, sample["metadata"])
-            if teacher is not None:
-                loss = loss + config.preserve_weight * video_loss(prediction[nv:], teacher[nv:], sample["metadata"])
-            (loss / config.accumulation).backward()
+            with decfg_mode(model, bool(config.decfg_path)):
+                with torch.autograd.graph.save_on_cpu(pin_memory=True):
+                    prediction = runtime.predict(model, prepared, video, audio, index)[0][0]
+                torch.cuda.synchronize()
+                nv = prepared["num_condition_video_rows"]
+                loss = video_loss(prediction[nv:], target, sample["metadata"])
+                if teacher is not None:
+                    loss = loss + config.preserve_weight * video_loss(prediction[nv:], teacher[nv:], sample["metadata"])
+                (loss / config.accumulation).backward()
             torch.cuda.synchronize()
             losses.append(float(loss.detach()))
             del prediction, loss, prepared, video, audio, target, trajectory, sample, teacher
@@ -173,13 +194,19 @@ def main():
             mean_loss.div_(dist.get_world_size())
         if primary():
             record = {"update": update, "loss": float(mean_loss), "grad_norm": float(norm),
-                      "lr": config.lr(update), "seconds": time.monotonic() - started}
+                      "lr": config.lr(update), "seconds": time.monotonic() - started,
+                      "decfg_training_only": bool(config.decfg_path)}
             with (out / "train.jsonl").open("a") as stream:
                 stream.write(json.dumps(record) + "\n")
             print(json.dumps(record), flush=True)
         if config.validate_at(update):
             save_checkpoint(model, optimizer, update, out, config)
             validate(model, runtime, decoder, validation, cache, out, update, dp_rank, dp_size, config)
+    if update and not config.validate_at(update):
+        save_checkpoint(model, optimizer, update, out, config)
+    if primary():
+        (out / "stopped.json").write_text(json.dumps({"update": update, "time": time.time(),
+            "reason": "step_budget" if config.steps is not None and update >= config.steps else "stop_signal"}, indent=2))
     if dist.is_initialized():
         dist.destroy_process_group()
 

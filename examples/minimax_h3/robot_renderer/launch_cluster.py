@@ -1,7 +1,7 @@
 """Launch the native recipe through the established four-node DCU container stack.
 
 Run on the controller. A new remote root owns immutable source/config/manifests,
-preparation logs, cached tensors and the bounded training run.
+preparation logs, cached tensors and the training run.
 """
 
 import argparse
@@ -45,6 +45,7 @@ def main():
     parser.add_argument("--model", default="/work/models/MiniMax-H3")
     parser.add_argument("--port", type=int, default=29816)
     parser.add_argument("--config")
+    parser.add_argument("--prepared", action="store_true", help="Reuse completed preparation shards")
     parser.add_argument("--revision", help="Published source commit when the controller is outside a Git checkout")
     parser.add_argument("--status", required=True)
     args = parser.parse_args()
@@ -75,6 +76,9 @@ def main():
         run(["rsync", "-rt", "--exclude=__pycache__", PACKAGE+"/", node+":"+root+"/"+PACKAGE+"/"])
         run(["scp", "-q", args.manifest, node+":"+root+"/manifest.jsonl"])
         run(["scp", "-q", str(status/"config.json"), node+":"+root+"/config.json"])
+        if args.prepared:
+            run(["scp", "-q", node+":"+root+"/cache/index.*.jsonl", str(status)+"/"])
+            return
         processes = []
         for gpu in range(8):
             shard = node_rank*8+gpu
@@ -94,20 +98,26 @@ def main():
             list(pool.map(prepare, range(4)))
         rows = [json.loads(line) for path in sorted(status.glob("index.*.jsonl"))
                 for line in path.read_text().splitlines() if line.strip()]
+        if len(list(status.glob("index.*.jsonl"))) != 32:
+            raise ValueError("All 32 preparation index shards must be complete before training")
         samples = Samples([row for row in rows if row["split"] == "train"])
         validation = validation_rows(rows)
         owners = {row["file"]: int(path.name.split(".")[1])//8
                   for path in status.glob("index.*.jsonl")
                   for row in map(json.loads, path.read_text().splitlines())}
         record("distributing_planned_cache", train_windows=sum(row["split"]=="train" for row in rows))
-        # Replicate only tensors this bounded run will read. Sampling still draws
-        # from the complete source-balanced index, using the exact training RNG.
-        for rank, node in enumerate(args.nodes):
+        # Continuous training can eventually sample every window. Finite runs
+        # retain the cheaper exact-schedule replication.
+        def distribute(rank):
+            node = args.nodes[rank]
             wanted = {row["file"] for row in validation[rank::4]}
-            for update in range(1, config.steps+1):
-                for micro in range(config.accumulation):
-                    rng = random.Random(config.seed+(update*config.accumulation+micro)*4+rank)
-                    wanted.add(samples.choose(rng)["file"])
+            if config.steps is None:
+                wanted.update(row["file"] for row in rows if row["split"] == "train")
+            else:
+                for update in range(1, config.steps+1):
+                    for micro in range(config.accumulation):
+                        rng = random.Random(config.seed+(update*config.accumulation+micro)*4+rank)
+                        wanted.add(samples.choose(rng)["file"])
             for owner, peer in enumerate(args.peers):
                 if owner == rank:
                     continue
@@ -118,7 +128,16 @@ def main():
                                              peer+":"+root+"/cache/", root+"/cache/"])])
             for path in sorted(status.glob("index.*.jsonl")):
                 run(["scp", "-q", str(path), node+":"+root+"/cache/"])
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(distribute, range(4)))
         master = run(["ssh", args.nodes[0], "hostname -I"]).split()[0]
+        if config.decfg_path:
+            record("qualifying_training_only_decfg")
+            command = container(["-m", "torch.distributed.run", "--standalone", "--nproc_per_node=8",
+                "-m", MODULE+".tests.check_decfg", "--model", args.model,
+                "--sample", cr+"/cache/"+validation[0]["file"], "--config", cr+"/config.json",
+                "--out", cr+"/decfg_qualification.json"])
+            run(["ssh", args.nodes[0], shlex.join(command)+" > "+shlex.quote(root+"/logs/decfg_qualification.log")+" 2>&1"])
         for rank, node in enumerate(args.nodes):
             command = container(["-m", "torch.distributed.run", "--nnodes=4", "--nproc_per_node=8",
                 "--node_rank="+str(rank), "--master_addr="+master, "--master_port="+str(args.port),

@@ -48,8 +48,11 @@ class NumericTests(unittest.TestCase):
                         audio_timesteps=runtime.pipe.audio_scheduler.timesteps,
                         row_timestep_plan=[(torch.tensor([0.5]), torch.zeros(1, dtype=torch.long))] * 50)
 
-        def zero_velocity(**inputs):
-            return torch.zeros_like(inputs["hidden_states"]), torch.zeros_like(inputs["audio_hidden_states"])
+        class ZeroVelocity(torch.nn.Module):
+            def forward(self, **inputs):
+                return torch.zeros_like(inputs["hidden_states"]), torch.zeros_like(inputs["audio_hidden_states"])
+
+        zero_velocity = ZeroVelocity()
 
         first, trajectory = runtime.sample(zero_velocity, prepared, dict(frames=5, height=32, width=32), True)
         second, _ = runtime.sample(zero_velocity, prepared, dict(frames=5, height=32, width=32))

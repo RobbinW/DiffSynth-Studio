@@ -6,6 +6,7 @@ from diffusers.modular_pipelines.minimax_h3.before_denoise import patchify_video
 from diffusers.modular_pipelines.minimax_h3.modular_blocks_minimax_h3 import MiniMaxH3Ref2VACoreDenoiseStep
 
 from .temporal import latent_frames
+from .decfg import decfg_mode
 
 
 def move(value, device):
@@ -59,12 +60,13 @@ class NativeRuntime:
         video, audio = state["latents"].clone(), state["audio_latents"].clone()
         nv, na = state["num_condition_video_rows"], state["num_condition_audio_rows"]
         trajectory = []
-        for index, (tv, ta) in enumerate(zip(state["timesteps"], state["audio_timesteps"])):
-            if record_audio:
-                trajectory.append(audio.cpu().clone())
-            vp, ap = self.predict(model, state, video, audio, index)
-            video[nv:] = self.pipe.scheduler.step(vp[0, nv:].float(), tv, video[nv:], return_dict=False)[0]
-            audio[na:] = self.pipe.audio_scheduler.step(ap[0, na:].float(), ta, audio[na:], return_dict=False)[0]
+        with decfg_mode(model, False):
+            for index, (tv, ta) in enumerate(zip(state["timesteps"], state["audio_timesteps"])):
+                if record_audio:
+                    trajectory.append(audio.cpu().clone())
+                vp, ap = self.predict(model, state, video, audio, index)
+                video[nv:] = self.pipe.scheduler.step(vp[0, nv:].float(), tv, video[nv:], return_dict=False)[0]
+                audio[na:] = self.pipe.audio_scheduler.step(ap[0, na:].float(), ta, audio[na:], return_dict=False)[0]
         result = unpack(video[nv:], latent_frames(metadata["frames"]), metadata["height"] // 16, metadata["width"] // 16)
         return result, trajectory
 

@@ -34,13 +34,16 @@ class TemporalTests(unittest.TestCase):
         self.assertTrue(valid_latents(140, 141)[-2])
         self.assertEqual(pad_tail([1, 2, 3], 5), [1, 2, 3, 3, 3])
 
-    def test_thousand_update_budget_and_scheduler(self):
+    def test_continuous_training_scheduler_and_checkpoint_frequency(self):
         config = Config()
-        self.assertEqual(config.steps, 1000)
+        self.assertIsNone(config.steps)
         self.assertEqual(config.frames, 158)
         self.assertAlmostEqual(config.lr(50), 1e-5)
         self.assertAlmostEqual(config.lr(1000), 1e-6)
+        self.assertAlmostEqual(config.lr(10000), 1e-6)
+        self.assertEqual([i for i in range(1501) if config.validate_at(i)], [0, 100, 250, 500, 1000, 1500])
         self.assertTrue(config.validate_at(1000))
+        self.assertTrue(Config(steps=123).validate_at(123))
 
 
 if __name__ == "__main__":

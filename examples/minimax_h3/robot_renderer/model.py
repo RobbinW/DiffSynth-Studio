@@ -65,7 +65,7 @@ def add_adapter(model, rank):
     return model
 
 
-def load_model(path, device, rank=32, group=None, shard=False, shard_group=None):
+def load_model(path, device, rank=32, group=None, shard=False, shard_group=None, decfg_path=None):
     model = MiniMaxH3Transformer3DModel.from_pretrained(
         path, subfolder="transformer_ref", torch_dtype=torch.bfloat16, local_files_only=True
     )
@@ -74,6 +74,9 @@ def load_model(path, device, rank=32, group=None, shard=False, shard_group=None)
         if parameter.dtype != expected:
             raise ValueError(f"Unexpected checkpoint dtype: {name} {parameter.dtype}, expected {expected}")
     add_adapter(model, rank)
+    if decfg_path:
+        from .decfg import attach_decfg
+        attach_decfg(model, decfg_path)
     SequenceParallel(model, group)
     if not shard:
         return model.to(device)
