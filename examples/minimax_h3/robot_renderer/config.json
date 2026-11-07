@@ -1,0 +1,19 @@
+{
+  "frames": 158,
+  "fps": 24,
+  "steps": 1000,
+  "rank": 32,
+  "learning_rate": 0.00001,
+  "minimum_learning_rate": 0.000001,
+  "warmup": 50,
+  "accumulation": 2,
+  "sequence_parallel": 8,
+  "weight_decay": 0.01,
+  "gradient_clip": 1.0,
+  "preserve_weight": 0.0,
+  "inference_steps": 50,
+  "seed": 42,
+  "trajectory_seeds": [42, 2026],
+  "validation_seeds": [42, 2026, 31415],
+  "validate_every": 100
+}
