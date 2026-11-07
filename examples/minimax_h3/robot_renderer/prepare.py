@@ -10,7 +10,7 @@ from .config import Config
 from .encode import Encoder
 from .media import read_manifest, read_pair
 from .runtime import NativeRuntime, move
-from .temporal import training_windows, pad_tail
+from .temporal import training_windows, rollout_windows, pad_tail
 
 
 def main():
@@ -30,18 +30,23 @@ def main():
     index_rows = []
     for row in read_manifest(args.manifest)[args.shard::args.shards]:
         real, proxy = read_pair(row, config.fps)
-        for window in training_windows(len(real), config.frames):
+        windows = (training_windows(len(real), config.frames) if row["split"] == "train"
+                   else rollout_windows(len(real), config.frames)[:1])
+        for window in windows:
             metadata = {key: row[key] for key in ("id", "source", "group", "split", "width", "height", "real", "proxy")}
             metadata.update(id=f"{row['id']}__f{window.start}", start=window.start,
                             valid=window.valid, frames=window.frames, pair_id=row["id"])
             target_path = out / f"{metadata['id']}.pt"
-            real_clip = pad_tail(real[window.start:window.start + window.valid], window.frames)
-            proxy_clip = pad_tail(proxy[window.start:window.start + window.valid], window.frames)
-            raw = encoder.conditions(real_clip[0], proxy_clip, metadata, row["prompt"])
-            prepared = {seed: runtime.prepare(move(raw, "cpu"), metadata, seed)
-                        for seed in sorted(set(config.trajectory_seeds) | set(config.validation_seeds))}
-            torch.save({"metadata": metadata, "target": encoder.video(real_clip, metadata).cpu(),
-                        "prepared": prepared}, target_path)
+            if not target_path.exists():
+                real_clip = pad_tail(real[window.start:window.start + window.valid], window.frames)
+                proxy_clip = pad_tail(proxy[window.start:window.start + window.valid], window.frames)
+                raw = move(encoder.conditions(real_clip[0], proxy_clip, metadata, row["prompt"]), "cpu")
+                prepared = {seed: runtime.prepare(raw, metadata, seed)
+                            for seed in sorted(set(config.trajectory_seeds) | set(config.validation_seeds))}
+                temporary = target_path.with_suffix(".tmp")
+                torch.save({"metadata": metadata, "target": encoder.video(real_clip, metadata).cpu(),
+                            "prepared": prepared}, temporary)
+                temporary.replace(target_path)
             index_rows.append(dict(metadata, file=target_path.name))
             print(target_path, flush=True)
     (out / f"index.{args.shard:03d}.jsonl").write_text(

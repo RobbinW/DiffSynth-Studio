@@ -45,13 +45,16 @@ class Processor:
         if rotary_emb is not None:
             q, k = (_apply_rotary_emb(x, *rotary_emb) for x in (q, k))
         if self.parallel is not None:
-            k, v = (self.parallel.gather(x, 1) for x in (k, v))
+            q, k, v = self.parallel.to_heads(torch.cat((q, k, v), dim=-1)).chunk(3, dim=-1)
         output = StableAttention.apply(*(x.transpose(1, 2) for x in (q, k, v)))
-        return attn.to_out[1](attn.to_out[0](output.transpose(1, 2).flatten(2)))
+        output = output.transpose(1, 2)
+        if self.parallel is not None:
+            output = self.parallel.to_sequence(output)
+        return attn.to_out[1](attn.to_out[0](output.flatten(2)))
 
 
 class SequenceParallel:
-    """Shard queries/FFNs; gather only valid KV rows, with autograd collectives."""
+    """Uneven Ulysses exchange: sequence-sharded FFNs, head-sharded attention."""
 
     def __init__(self, model, group=None):
         self.group = group
@@ -75,9 +78,37 @@ class SequenceParallel:
     def split(self, tensor, dim=0):
         return tensor.tensor_split(self.size, dim=dim)[self.rank].contiguous()
 
+    def lengths(self):
+        return [self.length // self.size + (rank < self.length % self.size)
+                for rank in range(self.size)]
+
+    def to_heads(self, tensor):
+        batch, local, heads, channels = tensor.shape
+        if heads % self.size:
+            raise ValueError("H3 attention heads must divide the sequence group")
+        part = heads // self.size
+        send = tensor.reshape(batch, local, self.size, part, channels).permute(2, 0, 1, 3, 4).contiguous().flatten()
+        receive_counts = [batch * length * part * channels for length in self.lengths()]
+        received = distributed_nn.all_to_all_single(
+            send.new_empty(sum(receive_counts)), send, output_split_sizes=receive_counts,
+            input_split_sizes=[batch * local * part * channels] * self.size, group=self.group)
+        return torch.cat([piece.reshape(batch, length, part, channels)
+                          for piece, length in zip(received.split(receive_counts), self.lengths())], dim=1)
+
+    def to_sequence(self, tensor):
+        batch, _, heads, channels = tensor.shape
+        local = self.lengths()[self.rank]
+        send_counts = [batch * length * heads * channels for length in self.lengths()]
+        send = torch.cat([piece.contiguous().flatten() for piece in tensor.split(self.lengths(), dim=1)])
+        received = distributed_nn.all_to_all_single(
+            send.new_empty(batch * local * heads * channels * self.size), send,
+            output_split_sizes=[batch * local * heads * channels] * self.size,
+            input_split_sizes=send_counts, group=self.group)
+        return received.reshape(self.size, batch, local, heads, channels).permute(1, 2, 0, 3, 4).reshape(
+            batch, local, heads * self.size, channels)
+
     def gather(self, tensor, dim):
-        lengths = [self.length // self.size + (rank < self.length % self.size)
-                   for rank in range(self.size)]
+        lengths = self.lengths()
         shape = list(tensor.shape)
         shape[dim] = max(lengths) - tensor.shape[dim]
         padded = torch.cat((tensor, tensor.new_zeros(shape)), dim=dim)

@@ -5,12 +5,21 @@ import torch
 from diffusers.modular_pipelines.minimax_h3.before_denoise import patchify_video_latents
 
 from ..attention import StableAttention
-from ..model import LoRALinear, without_adapter
+from ..model import LoRALinear, parameter_dtype, without_adapter
 from ..runtime import NativeRuntime, training_inputs, unpack
 from ..train import video_loss
 
 
 class NumericTests(unittest.TestCase):
+    def test_dtype_query_accepts_fsdp_tensor_views(self):
+        layer = torch.nn.Linear(4, 4, bias=False)
+        view = layer.weight.detach()
+        del layer._parameters["weight"]
+        layer.weight = view
+        self.assertEqual(list(layer.parameters()), [])
+        self.assertEqual(parameter_dtype(layer), torch.float32)
+        self.assertEqual(parameter_dtype(torch.nn.Sequential(torch.nn.Linear(4, 4))), torch.float32)
+
     def test_preparation_keeps_prompt_outside_layout_only_pipeline(self):
         class Layout:
             def __call__(self, **kwargs):

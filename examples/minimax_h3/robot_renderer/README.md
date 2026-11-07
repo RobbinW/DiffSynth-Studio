@@ -22,11 +22,19 @@ experiment loaders. No SolarRenderer control weights are loaded by this recipe.
 | Validation | At0/25/50/100 and every100updates through1000;50 actual model evaluations |
 | Precision | BF16 trunk; original FP32 projection/time owners; FP32 task adapter/optimizer/loss; FP64 positions |
 
+The DCU loop uses separate FSDP and SP communicators over the same eight node ranks,
+blockwise FSDP2 with managed FP32 adapters, one flat FP32 gradient
+reduction across data replicas, explicit device synchronization and no activation recomputation, following
+the earlier working launcher. Saved backward tensors are offloaded to CPU to fit the
+158-frame native layout on64GB cards. This trades host memory and transfer time for VRAM.
+
 Training consumes full158-frame windows in source order. Only the final remainder
 is padded by repeating its final frame to the **smallest legal17n+5 length at or
 above it**:140→141,150→158. No deliberately sampled short-frame buckets. Temporal
 groups containing padding are omitted from the video loss. Existing low-rate
 footage is resampled at shared physical timestamps;24fps does not invent observations.
+For a5-frame target tail, only the free proxy reference is held to22frames to
+satisfy Qwen's minimum video input; target length and supervised support stay unchanged.
 
 Inference always generates158 frames. Consecutive windows share one boundary:
 starts0,157,314,… . The previous generated last frame becomes the next native
@@ -44,7 +52,9 @@ The example is a namespace package; run the commands from the repository root.
 
 The model directory has `transformer_ref`, `text_encoder`, `processor`, `vae`
 and the official scheduler components. Model weights and datasets stay outside Git.
-The encoder offloads conditioner blocks to CPU between calls to limit GPU residency.
+The conditioner keeps its first30 language blocks on GPU and the remainder on CPU.
+The H3-local dtype query reads Linear tensor views directly during FSDP
+weight gathering, avoiding an upstream Python3.10 fallback error.
 
 Training manifest: JSONL, one real/proxy pair per row. Paths and captions are user
 inputs; captions must be derived from task instructions/initial observations/proxy,
@@ -76,7 +86,10 @@ conditioning and the original free video-reference layout. Real targets and
 proxies share geometry/time transforms and never pass through different lossy
 transport encodings.
 
-Cache the **frozen native joint sampler's audio state before each of its50 steps**:
+Training memoizes the **frozen native joint sampler's audio state before each of its50 steps**
+when a clip/seed is first sampled. The first visit therefore includes a frozen teacher rollout.
+This avoids an exhaustive two-seed teacher pass over every training window before launch.
+For optional offline cache warming:
 
 ```bash
 torchrun --standalone --nproc_per_node=8 \
@@ -88,11 +101,33 @@ Training samples a time index uniformly on that native50-step grid, reuses its
 exact initial video noise, and pairs the noised real target with the corresponding
 frozen native audio state. This replaces the old noised-silence input. It is
 discrete-grid task flow matching, not audio supervision or four-step distillation.
-Two trajectory seeds are cached per clip. The seed bank's coverage and generation
+Two trajectory seeds are available per clip; only requested trajectories are cached. The seed bank's coverage and generation
 quality still need validation on the real robot data; the implementation alone
 does not establish that earlier regression is solved.
 
-On each of four8-card nodes, set `NODE_RANK`, `MASTER_ADDR`, then run:
+The supplied controller launcher reuses the established container, Python and RCCL
+settings. It first prepares native caches across32 workers, then replicates only
+tensors the deterministic1000-update sampling schedule will read, and submits all
+four training workers. Every node retains the complete index; sampling is still
+from the full manifest. Use a fresh remote root for each immutable input/config snapshot.
+
+```bash
+python -m examples.minimax_h3.robot_renderer.launch_cluster \
+  --nodes DCU3_direct DCU4_direct DCU5_direct DCU6_direct \
+  --peers hygon3 hygon4 hygon5 hygon6 \
+  --manifest /data/pairs.jsonl \
+  --remote-root /data02/dex/h3_run_158f \
+  --container-root /train/h3_run_158f --status /runs/h3_launch
+```
+
+The controller writes its current phase and exact commands to`launch.json`.
+`preparing_native_158f_cache` is preparation; `training_submitted` records submitted
+processes. Actual optimizer progress appears only in`run/train.jsonl`. Validation
+uses two distinct groups per source, at three fixed seeds, including a step0 baseline.
+Each validation call also generates158frames and trims unsupported tail output;
+only training tails use shorter minimally padded legal lengths.
+
+For manual submission, on each of four8-card nodes, set `NODE_RANK`, `MASTER_ADDR`, then run:
 
 ```bash
 torchrun --nnodes=4 --nproc_per_node=8 --node_rank="$NODE_RANK" \
@@ -133,4 +168,20 @@ torchrun --standalone --nproc_per_node=2 \
 The checks cover minimal tail padding, boundary coverage, masked tail loss,
 native velocity sign, audio-state identity, adapter initialization/frozen base,
 analytical attention gradients, uneven SP gradients and checkpoint recomputation.
+On a real158-frame cache, full33B FSDP2 repeated backward also produced identical
+losses and gradients. The old FSDP1 frozen/ignored-adapter wrapping did not qualify
+for this native mixed-dtype model and is removed. The launcher/container/environment
+are retained from the established DCU runs; this numerical repair does not establish
+that adaptation improves video quality.
+
+Check distributed updates, data-replica averaging and optimizer checkpoint roundtrip:
+
+```bash
+torchrun --standalone --nproc_per_node=2 \
+  -m examples.minimax_h3.robot_renderer.tests.check_training \
+  --sequence-parallel 2 --out /tmp/h3-training-check
+```
+
+The same check runs across32 cards with SP8/DP4. It compares gradients, clipping and
+three AdamW updates against a full unsharded reference, including a save/reload.
 Reduced-model numerical checks do not establish full33B training quality.

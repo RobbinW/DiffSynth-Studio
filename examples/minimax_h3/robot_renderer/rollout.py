@@ -9,6 +9,7 @@ from PIL import Image
 import torch
 import torch.distributed as dist
 from safetensors.torch import load_file
+from torch.distributed.tensor import DTensor, distribute_tensor
 
 from .config import Config
 from .distributed import setup
@@ -28,12 +29,13 @@ def main():
     parser.add_argument("--config")
     args = parser.parse_args()
     config = Config.load(args.config)
-    device, group, dp_rank, dp_size = setup(config.sequence_parallel)
-    model = load_model(args.model, device, config.rank, group, shard=dist.is_initialized()).eval()
+    device, group, shard_group, dp_rank, dp_size = setup(config.sequence_parallel)
+    model = load_model(args.model, device, config.rank, group, shard=dist.is_initialized(), shard_group=shard_group).eval()
     if args.adapter:
         values = load_file(args.adapter)
         for name, parameter in adapter_parameters(model).items():
-            parameter.data.copy_(values[name].to(device))
+            parameter.data.copy_(distribute_tensor(values[name].to(device), parameter.device_mesh, parameter.placements)
+                                 if isinstance(parameter, DTensor) else values[name].to(device))
     leader = not dist.is_initialized() or dist.get_rank(group) == 0
     encoder = Encoder(args.model, str(device)) if leader else None
     decoder = Decoder(args.model, device) if leader else None

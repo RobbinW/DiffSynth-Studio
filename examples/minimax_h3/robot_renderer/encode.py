@@ -2,13 +2,14 @@
 
 import torch
 import numpy as np
+from accelerate import dispatch_model
 from diffusers import ComponentsManager, ModularPipeline
-from diffusers.hooks import apply_group_offloading
 from diffusers.modular_pipelines import SequentialPipelineBlocks
 from diffusers.modular_pipelines.minimax_h3 import MiniMaxH3ImageReference, MiniMaxH3VideoReference
 from diffusers.modular_pipelines.minimax_h3.decoders import MiniMaxH3VideoDecodeStep
 
 from .media import structured_prompt
+from .temporal import pad_tail
 
 
 class Encoder:
@@ -25,9 +26,12 @@ class Encoder:
         self.conditioned.load_components(dtype=torch.bfloat16)
         encoder = self.conditioned.text_encoder
         encoder.set_attn_implementation("sdpa")
-        apply_group_offloading(encoder, onload_device=torch.device(device),
-                               offload_device=torch.device("cpu"), offload_type="block_level",
-                               num_blocks_per_group=1, use_stream=False)
+        mapping = {"model.visual": device, "model.language_model.embed_tokens": device,
+                   "model.language_model.norm": device, "model.language_model.rotary_emb": device,
+                   "lm_head": device}
+        mapping.update({f"model.language_model.layers.{index}": device if index < 30 else "cpu"
+                        for index in range(len(encoder.model.language_model.layers))})
+        dispatch_model(encoder, device_map=mapping, main_device=device, force_hooks=True)
         self.conditioned.vae.to(device)
         self.target = chain(("before_encode", "vae_encoder"))
         self.target.update_components(**{
@@ -42,6 +46,9 @@ class Encoder:
     @torch.no_grad()
     def conditions(self, reference, proxy, metadata, prompt):
         self.canvas(metadata)
+        # Qwen reads at2fps and needs two sampled frames; a free video reference
+        # can be longer than a5-frame target without adding target supervision.
+        proxy = pad_tail(proxy, max(22, len(proxy)))
         # Only the front-end duration validator needs >=5s. Actual reference media
         # and the subsequent native target layout retain the short tail's length.
         state = self.conditioned(

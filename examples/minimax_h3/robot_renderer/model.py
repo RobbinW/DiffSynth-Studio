@@ -6,9 +6,20 @@ import math
 import torch
 from torch import nn
 from diffusers import MiniMaxH3Transformer3DModel
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+from diffusers.models.transformers import transformer_minimax_h3 as h3
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.fsdp import fully_shard
 
 from .attention import SequenceParallel
+
+
+def parameter_dtype(module):
+    # FSDP recomputation exposes Linear.weight as a Tensor view, not a registered
+    # Parameter. Diffusers' Python3.10 fallback also shadows the builtin tuple.
+    return module.weight.dtype if hasattr(module, "weight") else next(module.parameters()).dtype
+
+
+h3.get_parameter_dtype = parameter_dtype
 
 
 class LoRALinear(nn.Module):
@@ -24,12 +35,12 @@ class LoRALinear(nn.Module):
     def forward(self, hidden):
         output = self.base(hidden)
         if self.enabled:
-            output = output + self.lora_B(self.lora_A(hidden.float())).to(output.dtype)
+            output = output + self.lora_B(self.lora_A(hidden.to(self.lora_A.weight.dtype))).to(output.dtype)
         return output
 
 
 def adapter_parameters(model):
-    return {name.replace("_fsdp_wrapped_module.", ""): value
+    return {name.replace("_fsdp_wrapped_module.", "").replace("_checkpoint_wrapped_module.", ""): value
             for name, value in model.named_parameters() if "lora_" in name}
 
 
@@ -54,7 +65,7 @@ def add_adapter(model, rank):
     return model
 
 
-def load_model(path, device, rank=32, group=None, shard=False):
+def load_model(path, device, rank=32, group=None, shard=False, shard_group=None):
     model = MiniMaxH3Transformer3DModel.from_pretrained(
         path, subfolder="transformer_ref", torch_dtype=torch.bfloat16, local_files_only=True
     )
@@ -64,16 +75,15 @@ def load_model(path, device, rank=32, group=None, shard=False):
             raise ValueError(f"Unexpected checkpoint dtype: {name} {parameter.dtype}, expected {expected}")
     add_adapter(model, rank)
     SequenceParallel(model, group)
-    model.enable_gradient_checkpointing()
     if not shard:
         return model.to(device)
-    ignored = [parameter for parameter in model.parameters() if parameter.dtype == torch.float32]
-    for parameter in ignored:
-        parameter.data = parameter.data.to(device)
-
-    def wrap(module, recurse, nonwrapped_numel):
-        return recurse or type(module).__name__ in {"MiniMaxH3TransformerBlock", "MiniMaxH3TokenRefinerBlock"}
-
-    return FSDP(model, process_group=group, auto_wrap_policy=wrap, device_id=device,
-                ignored_states=ignored, use_orig_params=True,
-                sharding_strategy=ShardingStrategy.FULL_SHARD, limit_all_gathers=True)
+    mesh = DeviceMesh.from_group(shard_group, "cuda")
+    # FSDP2 owns the adapters and supports the checkpoint's mixed dtypes directly.
+    # Move/shard one block at a time; the full33B model never resides on one card.
+    for blocks in (model.transformer_blocks, model.token_refiner.refiner_blocks):
+        for block in blocks:
+            block.to(device)
+            fully_shard(block, mesh=mesh)
+    model.to(device)
+    fully_shard(model, mesh=mesh)
+    return model
