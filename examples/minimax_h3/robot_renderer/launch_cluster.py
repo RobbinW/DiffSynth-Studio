@@ -45,6 +45,7 @@ def main():
     parser.add_argument("--model", default="/work/models/MiniMax-H3")
     parser.add_argument("--port", type=int, default=29816)
     parser.add_argument("--config")
+    parser.add_argument("--revision", help="Published source commit when the controller is outside a Git checkout")
     parser.add_argument("--status", required=True)
     args = parser.parse_args()
     status = Path(args.status)
@@ -53,7 +54,7 @@ def main():
     config.save(status / "config.json")
     root, cr = args.remote_root, args.container_root
     workers = []
-    revision = run(["git", "rev-parse", "HEAD"])
+    revision = args.revision or run(["git", "rev-parse", "HEAD"])
     manifest_sha256 = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
 
     def record(phase, **extra):
