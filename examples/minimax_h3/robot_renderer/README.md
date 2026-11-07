@@ -15,7 +15,7 @@ experiment loaders. No SolarRenderer control weights are loaded by this recipe.
 | Training budget | **Continuous until a stop signal**; `steps` can set a finite budget |
 | Adapter | Attention Q/K/V/output only; rank=alpha=32; zero output initialization |
 | Frozen | H3 base, FFNs, text refiners, encoders, VAE |
-| Optimizer | FP32 AdamW; warmup50, cosine LR1e-5→1e-6 through update1000, then hold1e-6; betas0.9/0.95, eps1e-8, decay0.01 |
+| Optimizer | FP32 AdamW; LR5e-5, linear warmup100, then constant5e-5; betas0.9/0.95, eps1e-8, decay0.01 |
 | Batch on32cards | SP8×DP4×accumulation2 =8 clips/update |
 | Loss | Video-only data-ward flow matching; optional preservation weight0.1, default0 |
 | DeCFG | Set `decfg_path` to the historical frozen Ref2VA adapter; active only in supervised training |
@@ -146,8 +146,8 @@ texture, motion, contacts and flicker alongside it; low supervised loss or PSNR
 alone does not select the best model. There is no automatic image-quality stopping heuristic. With `steps: null`, training
 continues until requested to stop. SIGTERM/SIGINT on a training worker requests a
 coordinated stop after the current update and saves the final checkpoint. Checkpoints
-include step0 and every validation update. The LR decay horizon is independent of
-the stopping budget and does not restart after update1000.
+include step0 and every validation update. The historical DeCFG learning-rate schedule is retained:100 updates of linear
+warmup to5e-5, followed by constant5e-5 without decay.
 
 Rollout manifest needs `id`, `reference` (initial image path), `proxy`, `width`,
 `height`, and `prompt`; no real target video is required:

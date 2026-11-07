@@ -2,7 +2,6 @@
 
 from dataclasses import asdict, dataclass
 import json
-import math
 from pathlib import Path
 
 
@@ -12,10 +11,8 @@ class Config:
     fps: int = 24
     steps: int | None = None
     rank: int = 32
-    learning_rate: float = 1e-5
-    minimum_learning_rate: float = 1e-6
-    warmup: int = 50
-    lr_decay_steps: int = 1000
+    learning_rate: float = 5e-5
+    warmup: int = 100
     accumulation: int = 2
     sequence_parallel: int = 8
     weight_decay: float = 0.01
@@ -36,12 +33,7 @@ class Config:
         Path(path).write_text(json.dumps(asdict(self), indent=2) + "\n")
 
     def lr(self, update):
-        if update <= self.warmup:
-            return self.learning_rate * update / self.warmup
-        progress = min(1.0, (update - self.warmup) / (self.lr_decay_steps - self.warmup))
-        return self.minimum_learning_rate + 0.5 * (
-            self.learning_rate - self.minimum_learning_rate
-        ) * (1 + math.cos(math.pi * progress))
+        return self.learning_rate * min(1.0, update / max(1, self.warmup))
 
     def validate_at(self, update):
         return update in (0, 100, 250, self.steps) or update % self.validate_every == 0

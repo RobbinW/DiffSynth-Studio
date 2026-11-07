@@ -3,9 +3,8 @@
   "fps": 24,
   "steps": null,
   "rank": 32,
-  "learning_rate": 1e-05,
-  "minimum_learning_rate": 1e-06,
-  "warmup": 50,
+  "learning_rate": 5e-05,
+  "warmup": 100,
   "accumulation": 2,
   "sequence_parallel": 8,
   "weight_decay": 0.01,
@@ -23,6 +22,5 @@
     31415
   ],
   "validate_every": 500,
-  "lr_decay_steps": 1000,
   "decfg_path": null
 }
