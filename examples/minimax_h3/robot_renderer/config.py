@@ -17,7 +17,8 @@ class Config:
     sequence_parallel: int = 8
     weight_decay: float = 0.01
     gradient_clip: float = 1.0
-    attention_backend: str = "stable"
+    attention_backend: str = "scaled_sdpa"
+    checkpoint_stride: int = 2
     inference_steps: int = 50
     seed: int = 42
     training_seeds: tuple = (42, 2026)

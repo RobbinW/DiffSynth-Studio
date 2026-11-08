@@ -973,7 +973,8 @@
         const last = history.at(-1);
         return median(history.filter((row) =>
           row.audio_conditioning === last?.audio_conditioning &&
-          row.attention_backend === last?.attention_backend
+          row.attention_backend === last?.attention_backend &&
+          row.checkpoint_stride === last?.checkpoint_stride
         ).slice(-10).map((row) => row.seconds));
       };
       const scheduledCheck = (step, c) =>

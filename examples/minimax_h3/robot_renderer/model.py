@@ -66,7 +66,7 @@ def add_adapter(model, rank):
 
 
 def load_model(path, device, rank=32, group=None, shard=False, shard_group=None, decfg_path=None,
-               attention_backend="stable"):
+               attention_backend="scaled_sdpa"):
     model = MiniMaxH3Transformer3DModel.from_pretrained(
         path, subfolder="transformer_ref", torch_dtype=torch.bfloat16, local_files_only=True
     )
@@ -91,3 +91,18 @@ def load_model(path, device, rank=32, group=None, shard=False, shard_group=None,
     model.to(device)
     fully_shard(model, mesh=mesh)
     return model
+
+
+def configure_training_memory(model, checkpoint_stride):
+    """Keep activations on device; recompute every nth block to fit 64GB cards."""
+    from torch.utils.checkpoint import checkpoint
+
+    if checkpoint_stride == 0:
+        model.disable_gradient_checkpointing()
+        return
+    plain = {id(block) for index, block in enumerate(model.transformer_blocks) if index % checkpoint_stride}
+
+    def selective(block, *inputs):
+        return block(*inputs) if id(block) in plain else checkpoint(block, *inputs, use_reentrant=False)
+
+    model.enable_gradient_checkpointing(gradient_checkpointing_func=selective)

@@ -22,12 +22,15 @@ experiment loaders. No SolarRenderer control weights are loaded by this recipe.
 | Inverse-CFG / extra inference CFG | Disabled |
 | Validation and checkpoint | At0/100/250 and every500updates;50 actual model evaluations |
 | Precision | BF16 trunk; original FP32 projection/time owners; FP32 task adapter/optimizer/loss; FP64 positions |
+| Attention | Fused SDPA with local power-of-two gradient normalization (`scaled_sdpa`) |
+| Activation memory | On device; recompute every second block (`checkpoint_stride=2`), no CPU activation offload |
 
 The DCU loop uses separate FSDP and SP communicators over the same eight node ranks,
 blockwise FSDP2 with managed FP32 adapters, one flat FP32 gradient
-reduction across data replicas, explicit device synchronization and no activation recomputation, following
-the earlier working launcher. Saved backward tensors are offloaded to CPU to fit the
-158-frame native layout on64GB cards. This trades host memory and transfer time for VRAM.
+reduction across data replicas and explicit device synchronization. Activations stay
+on the DCUs. Every second transformer block and the text refiners use non-reentrant
+activation checkpointing. Long158-frame probes used about50GiB allocated /57GiB
+reserved per card; retaining more blocks exceeded64GB on the tested stack.
 
 Training consumes full158-frame windows in source order. Only the final remainder
 is padded by repeating its final frame to the **smallest legal17n+5 length at or
@@ -208,15 +211,32 @@ PSNR differences are supporting metrics, not a claim of perceptual improvement.
 
 ## Attention throughput and resuming a recipe change
 
-`attention_backend: "stable"` retains the analytical FP32 backward with larger,
-aligned query chunks. `"sdpa"` uses the native fused backward and must qualify on
-the actual DCU stack: full33B repeated gradients, comparison to the analytical
-reference, frozen DeCFG preservation, and an optimizer update. The cluster
-launcher performs this check before submission and loads the resume adapter into
-the probe. Single-layer speed measurements alone do not qualify a backend.
+`attention_backend: "scaled_sdpa"` uses public PyTorch fused SDPA. An identity
+autograd wrapper scales its incoming gradient by a locally selected power of two,
+then divides Q/K/V gradients by the same factor before projections and distributed
+reduction. Forward values and the mathematical VJP are unchanged. This works around
+observed small-gradient instability in the vendor fused backward without changing
+the task loss, learning rate, or optimizer precision. Scaling is computed on device.
+
+`"stable"` retains analytical FP32 backward for reference comparisons; raw `"sdpa"`
+is retained for diagnosis. Raw fused backward showed multi-fold gradient errors on
+a long near-clean clip, although mid-noise clips looked reasonable. Zero-initializing
+its output buffers alone did not fix this. CPU offload and FP32 backward are not used
+in the default training loop.
+
+Qualification uses full33B repeated gradients, comparison to the analytical
+reference, frozen DeCFG preservation, and an optimizer update. It allows5% repeated
+gradient error and10% error / cosine>.995 against the FP32 reference. These are
+mixed-precision acceptance bounds, not claims of bitwise equivalence. Separate
+saved-AdamW experiments at schedule indices0/25/49 measured approximately1.2–1.9%
+update error and cosine>.9998 after normalization; forward predictions matched
+exactly. Fixed validation clips remain the quality check. The cluster launcher
+loads the resume adapter into its probe; single-layer timings alone do not qualify
+a backend.
 
 The training log includes input/forward/backward/gradient-sync/optimizer timings,
-sampled clips, and `teacher_forwards: 0`. Other data replicas write `train_dp*.jsonl`.
+sampled clips, peak allocated/reserved VRAM, and `teacher_forwards: 0`.
+Other data replicas write `train_dp*.jsonl`.
 Use `--resume /path/to/checkpoint --skip-initial-validation` for a maintenance
 restart without repeating an unscheduled validation. Optimizer step and RNG are
 restored; checkpoint/test steps100/250/500 and every500 remain unchanged.

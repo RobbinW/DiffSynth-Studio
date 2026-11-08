@@ -1,9 +1,36 @@
-"""Stable SDPA backward and uneven packed-sequence parallelism for native H3."""
+"""Fused attention with local gradient scaling and native sequence parallelism."""
 
 import torch
 import torch.distributed as dist
 import torch.distributed.nn.functional as distributed_nn
 from diffusers.models.transformers.transformer_minimax_h3 import _apply_rotary_emb
+
+
+class ScaleAttentionGradient(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, tensor, state, output):
+        ctx.state, ctx.output = state, output
+        return tensor
+
+    @staticmethod
+    def backward(ctx, gradient):
+        # Normalize only the fused kernel's incoming VJP. Undo the same power
+        # of two on Q/K/V, before gradients reach projections or DP reduction.
+        # This avoids the vendor backward's observed small-gradient instability.
+        if ctx.output:
+            scale = torch.exp2(-torch.floor(torch.log2(gradient.float().abs().amax().clamp_min(1e-30))))
+            ctx.state["scale"] = scale
+            result = gradient.float() * scale
+        else:
+            result = gradient.float() / ctx.state["scale"]
+        return result.to(gradient.dtype), None, None
+
+
+def scaled_attention(q, k, v):
+    state = {}
+    q, k, v = (ScaleAttentionGradient.apply(x, state, False) for x in (q, k, v))
+    output = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    return ScaleAttentionGradient.apply(output, state, True)
 
 
 class StableAttention(torch.autograd.Function):
@@ -35,7 +62,7 @@ class StableAttention(torch.autograd.Function):
 
 
 class Processor:
-    def __init__(self, parallel=None, backend="stable"):
+    def __init__(self, parallel=None, backend="scaled_sdpa"):
         self.parallel = parallel
         self.backend = backend
 
@@ -49,7 +76,8 @@ class Processor:
             q, k = (_apply_rotary_emb(x, *rotary_emb) for x in (q, k))
         if self.parallel is not None:
             q, k, v = self.parallel.to_heads(torch.cat((q, k, v), dim=-1)).chunk(3, dim=-1)
-        attention = StableAttention.apply if self.backend == "stable" else torch.nn.functional.scaled_dot_product_attention
+        attention = {"stable": StableAttention.apply, "sdpa": torch.nn.functional.scaled_dot_product_attention,
+                     "scaled_sdpa": scaled_attention}[self.backend]
         output = attention(*(x.transpose(1, 2) for x in (q, k, v)))
         output = output.transpose(1, 2)
         if self.parallel is not None:
@@ -60,8 +88,8 @@ class Processor:
 class SequenceParallel:
     """Uneven Ulysses exchange: sequence-sharded FFNs, head-sharded attention."""
 
-    def __init__(self, model, group=None, backend="stable"):
-        if backend not in ("stable", "sdpa"):
+    def __init__(self, model, group=None, backend="scaled_sdpa"):
+        if backend not in ("stable", "sdpa", "scaled_sdpa"):
             raise ValueError(f"Unknown attention backend: {backend}")
         self.group = group
         self.size = dist.get_world_size(group) if group is not None else 1

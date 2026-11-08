@@ -22,7 +22,7 @@ from .decfg import decfg_mode
 from .distributed import average_gradients, clip_gradients, primary, setup
 from .encode import Decoder
 from .media import read_index, read_video, resample, write_video
-from .model import adapter_parameters, load_model
+from .model import adapter_parameters, configure_training_memory, load_model
 from .runtime import NativeRuntime, move, training_inputs
 from .sampling import Samples, validation_rows
 from .temporal import valid_latents
@@ -115,6 +115,7 @@ def main():
     model = load_model(args.model, device, config.rank, group, shard=dist.is_initialized(),
                        shard_group=shard_group, decfg_path=config.decfg_path,
                        attention_backend=config.attention_backend)
+    configure_training_memory(model, config.checkpoint_stride)
     parameters = list(adapter_parameters(model).values())
     optimizer = torch.optim.AdamW(parameters, lr=config.learning_rate,
                                  betas=(0.9, 0.95), eps=1e-8, weight_decay=config.weight_decay)
@@ -159,9 +160,11 @@ def main():
     if start == 0:
         save_checkpoint(model, optimizer, 0, out, config)
     update = start
+    model.train()
     while (config.steps is None or update < config.steps) and not stopping():
         update += 1
         started = time.monotonic()
+        torch.cuda.reset_peak_memory_stats()
         optimizer.zero_grad(set_to_none=True)
         losses = []
         phases = dict(input=0.0, forward=0.0, backward=0.0, gradient_sync=0.0, optimizer=0.0)
@@ -181,8 +184,7 @@ def main():
                              tokens=prepared["token_tags"].numel()))
             begin = time.monotonic()
             with decfg_mode(model, bool(config.decfg_path)):
-                with torch.autograd.graph.save_on_cpu(pin_memory=True):
-                    prediction = runtime.predict(model, prepared, video, audio, index)[0][0]
+                prediction = runtime.predict(model, prepared, video, audio, index)[0][0]
                 torch.cuda.synchronize()
                 nv = prepared["num_condition_video_rows"]
                 loss = video_loss(prediction[nv:], target, sample["metadata"])
@@ -213,7 +215,10 @@ def main():
                       "lr": config.lr(update), "seconds": time.monotonic() - started,
                       "decfg_training_only": bool(config.decfg_path), "audio_conditioning": "noised_silence",
                       "teacher_forwards": 0, "phase_seconds": phases, "samples": used,
-                      "dp_rank": dp_rank, "time": time.time(), "attention_backend": config.attention_backend}
+                      "dp_rank": dp_rank, "time": time.time(), "attention_backend": config.attention_backend,
+                      "checkpoint_stride": config.checkpoint_stride, "activation_cpu_offload": False,
+                      "peak_allocated_gib": torch.cuda.max_memory_allocated() / 2**30,
+                      "peak_reserved_gib": torch.cuda.max_memory_reserved() / 2**30}
             with (out / ("train.jsonl" if primary() else f"train_dp{dp_rank}.jsonl")).open("a") as stream:
                 stream.write(json.dumps(record) + "\n")
             print(json.dumps(record), flush=True)

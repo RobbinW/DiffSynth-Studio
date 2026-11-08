@@ -4,13 +4,26 @@ from types import SimpleNamespace
 import torch
 from diffusers.modular_pipelines.minimax_h3.before_denoise import patchify_video_latents
 
-from ..attention import StableAttention
+from ..attention import StableAttention, scaled_attention
 from ..model import LoRALinear, parameter_dtype, without_adapter
 from ..runtime import NativeRuntime, training_inputs, unpack
 from ..train import video_loss
 
 
 class NumericTests(unittest.TestCase):
+    def test_attention_local_scaling_preserves_forward_and_vjp(self):
+        torch.manual_seed(17)
+        values = [torch.randn(1, 3, length, 16, requires_grad=True) for length in (7, 11, 11)]
+        upstream = torch.randn(1, 3, 7, 16)
+        for magnitude in (0.0, 1e-12, 1.0):
+            expected = torch.nn.functional.scaled_dot_product_attention(*values)
+            actual = scaled_attention(*values)
+            torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+            reference = torch.autograd.grad(expected, values, upstream * magnitude)
+            gradients = torch.autograd.grad(actual, values, upstream * magnitude)
+            for a, b in zip(gradients, reference):
+                torch.testing.assert_close(a, b, atol=1e-20, rtol=2e-5)
+
     def test_dtype_query_accepts_fsdp_tensor_views(self):
         layer = torch.nn.Linear(4, 4, bias=False)
         view = layer.weight.detach()
