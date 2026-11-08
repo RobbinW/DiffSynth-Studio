@@ -31,6 +31,8 @@ reduction across data replicas and explicit device synchronization. Activations 
 on the DCUs. Every second transformer block and the text refiners use non-reentrant
 activation checkpointing. Long158-frame probes used about50GiB allocated /57GiB
 reserved per card; retaining more blocks exceeded64GB on the tested stack.
+The FP32 video decoder is loaded only during validation and released afterward;
+it does not occupy the sequence leader's VRAM during training.
 
 Training consumes full158-frame windows in source order. Only the final remainder
 is padded by repeating its final frame to the **smallest legal17n+5 length at or

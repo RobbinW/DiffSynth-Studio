@@ -60,9 +60,10 @@ def save_checkpoint(model, optimizer, update, out, config):
 
 
 @torch.no_grad()
-def validate(model, runtime, decoder, rows, cache, out, update, dp_rank, dp_size, config):
+def validate(model, runtime, model_path, rows, cache, out, update, dp_rank, dp_size, config):
     model.eval()
     leader = not dist.is_initialized() or dist.get_rank() % config.sequence_parallel == 0
+    decoder = Decoder(model_path, runtime.device) if leader else None
     for row in rows[dp_rank::dp_size]:
         sample = torch.load(cache / row["file"], map_location="cpu", weights_only=False)
         metadata = sample["metadata"]
@@ -81,6 +82,8 @@ def validate(model, runtime, decoder, rows, cache, out, update, dp_rank, dp_size
                 (folder / "metrics.json").write_text(json.dumps({"psnr": psnr, "seed": seed, "metadata": metadata}, indent=2))
     if dist.is_initialized():
         dist.barrier()
+    del decoder
+    torch.cuda.empty_cache()
     model.train()
 
 
@@ -127,7 +130,6 @@ def main():
     silence = torch.load(cache / "silence.pt", map_location=device, weights_only=True)
     runtime = NativeRuntime(args.model, device, config.inference_steps)
     leader = not dist.is_initialized() or dist.get_rank(group) == 0
-    decoder = Decoder(args.model, device) if leader else None
     start = 0
     if args.resume:
         folder = Path(args.resume)
@@ -156,7 +158,7 @@ def main():
                           "train_windows": sum(row["split"] == "train" for row in rows),
                           "validation_windows": len(validation), "steps": config.steps}), flush=True)
     if not (args.resume and args.skip_initial_validation):
-        validate(model, runtime, decoder, validation, cache, out, start, dp_rank, dp_size, config)
+        validate(model, runtime, args.model, validation, cache, out, start, dp_rank, dp_size, config)
     if start == 0:
         save_checkpoint(model, optimizer, 0, out, config)
     update = start
@@ -224,7 +226,7 @@ def main():
             print(json.dumps(record), flush=True)
         if config.validate_at(update):
             save_checkpoint(model, optimizer, update, out, config)
-            validate(model, runtime, decoder, validation, cache, out, update, dp_rank, dp_size, config)
+            validate(model, runtime, args.model, validation, cache, out, update, dp_rank, dp_size, config)
     if update and not config.validate_at(update):
         save_checkpoint(model, optimizer, update, out, config)
     if primary():
