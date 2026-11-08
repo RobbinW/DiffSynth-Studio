@@ -30,7 +30,10 @@ ENV = {"NCCL_SOCKET_IFNAME": "eth0", "NCCL_IB_GID_INDEX": "3",
 
 
 def run(command):
-    return subprocess.run(command, check=True, text=True, capture_output=True).stdout.strip()
+    result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError(f"{shlex.join(command)} failed ({result.returncode}): {result.stderr.strip()}")
+    return result.stdout.strip()
 
 
 def main():
@@ -126,8 +129,10 @@ def main():
                 run(["scp", "-q", str(listing), node+":"+root+"/copy.txt"])
                 run(["ssh", node, shlex.join(["rsync", "-rt", "--files-from="+root+"/copy.txt",
                                              peer+":"+root+"/cache/", root+"/cache/"])])
-            for path in sorted(status.glob("index.*.jsonl")):
-                run(["scp", "-q", str(path), node+":"+root+"/cache/"])
+            # Encoders run as container root. Skip identical existing shards;
+            # rsync can atomically replace files through the host-owned directory.
+            run(["rsync", "-r", "--checksum", *map(str, sorted(status.glob("index.*.jsonl"))),
+                 node+":"+root+"/cache/"])
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(distribute, range(4)))
         master = run(["ssh", args.nodes[0], "hostname -I"]).split()[0]
