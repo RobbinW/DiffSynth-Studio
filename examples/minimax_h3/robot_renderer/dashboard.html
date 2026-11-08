@@ -853,6 +853,7 @@
             每步抽取的片段与时间步不同，loss
             的短期起伏不等于画质变好或变差。效果需用相同片段、相同种子的生成视频判断。
           </p>
+          <p class="context-note" id="recipeChange" hidden></p>
         </section>
         <div class="recipe">
           <strong>当前训练配方</strong>
@@ -968,6 +969,15 @@
       };
       const duration = (s) =>
         s ? `${Math.floor(s / 60)}分${Math.round(s % 60)}秒` : "—";
+      const recentSpeed = (history) => {
+        const last = history.at(-1);
+        return median(history.filter((row) =>
+          row.audio_conditioning === last?.audio_conditioning &&
+          row.attention_backend === last?.attention_backend
+        ).slice(-10).map((row) => row.seconds));
+      };
+      const scheduledCheck = (step, c) =>
+        step === 100 || step === 250 || step % (c.validate_every || 500) === 0;
       const url = (dir, name) =>
         dir.split("/").map(encodeURIComponent).join("/") + "/" + name;
       function nextCheck(step, c) {
@@ -988,6 +998,7 @@
         const last = data.history.at(-1);
         const inValidation =
           last &&
+          scheduledCheck(last.update, data.config) &&
           data.checkpoints.includes(last.update) &&
           data.nodes
             .flatMap((n) => n.validations || [])
@@ -999,7 +1010,7 @@
           Date.now() / 1000 - data.last_update_at >
             Math.max(
               1800,
-              3 * median(data.history.slice(-10).map((x) => x.seconds)),
+              3 * recentSpeed(data.history),
             );
         const message =
           loadError ||
@@ -1087,7 +1098,7 @@
           h = data.history,
           last = h.at(-1) || {},
           step = last.update || 0,
-          speed = median(h.slice(-10).map((x) => x.seconds)),
+          speed = recentSpeed(h),
           next = nextCheck(step, c);
         const nodes = data.nodes,
           connected = nodes.every((n) => n.connected),
@@ -1101,6 +1112,7 @@
             .filter((v) => v.step === checkpoint).length;
         const validating =
           checkpoint > 0 &&
+          scheduledCheck(checkpoint, c) &&
           checkpoint === step &&
           remoteCount < data.expected_validation;
         const unhealthy =
@@ -1119,6 +1131,11 @@
           "最近参数更新 · " + time(data.last_update_at);
         $("cards").textContent = workers + " / 32";
         $("speed").textContent = duration(speed);
+        const transition = h.find((row) => row.audio_conditioning === "noised_silence");
+        $("recipeChange").hidden = !transition;
+        $("recipeChange").textContent = transition
+          ? `从 Step ${transition.update} 起移除在线教师与 anchor，保留 DeCFG，缺失音频使用加噪静音。近期单步耗时只统计当前配方；切换前后的 loss 不宜直接归因于模型质量。`
+          : "";
         $("lr").textContent = last.lr?.toExponential(2) || "—";
         $("warmup").textContent =
           step < c.warmup
