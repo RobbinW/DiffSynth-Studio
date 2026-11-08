@@ -22,11 +22,10 @@ from .decfg import decfg_mode
 from .distributed import average_gradients, clip_gradients, primary, setup
 from .encode import Decoder
 from .media import read_index, read_video, resample, write_video
-from .model import adapter_parameters, load_model, without_adapter
+from .model import adapter_parameters, load_model
 from .runtime import NativeRuntime, move, training_inputs
 from .sampling import Samples, validation_rows
 from .temporal import valid_latents
-from .trajectories import audio_trajectory
 
 
 def video_loss(prediction, target, metadata):
@@ -55,6 +54,7 @@ def save_checkpoint(model, optimizer, update, out, config):
         folder.mkdir(parents=True, exist_ok=True)
         save_file(values,
                   str(folder / "adapter.safetensors"), metadata={"rank": str(config.rank), "alpha": str(config.rank)})
+        (folder / "adapter.safetensors").chmod(0o644)
         torch.save({"update": update, "optimizer": optimizer_state, "rng": states}, folder / "training.pt")
         config.save(folder / "config.json")
 
@@ -91,6 +91,8 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--config")
     parser.add_argument("--resume")
+    parser.add_argument("--skip-initial-validation", action="store_true",
+                        help="Resume a saved update without repeating validation; scheduled checks still run")
     args = parser.parse_args()
     config = Config.load(args.config)
     device, group, shard_group, dp_rank, dp_size = setup(config.sequence_parallel)
@@ -111,7 +113,8 @@ def main():
         return bool(flag.item())
 
     model = load_model(args.model, device, config.rank, group, shard=dist.is_initialized(),
-                       shard_group=shard_group, decfg_path=config.decfg_path)
+                       shard_group=shard_group, decfg_path=config.decfg_path,
+                       attention_backend=config.attention_backend)
     parameters = list(adapter_parameters(model).values())
     optimizer = torch.optim.AdamW(parameters, lr=config.learning_rate,
                                  betas=(0.9, 0.95), eps=1e-8, weight_decay=config.weight_decay)
@@ -120,6 +123,7 @@ def main():
     rows = read_index(cache)
     samples = Samples([row for row in rows if row["split"] == "train"])
     validation = validation_rows(rows)
+    silence = torch.load(cache / "silence.pt", map_location=device, weights_only=True)
     runtime = NativeRuntime(args.model, device, config.inference_steps)
     leader = not dist.is_initialized() or dist.get_rank(group) == 0
     decoder = Decoder(args.model, device) if leader else None
@@ -140,12 +144,18 @@ def main():
         rng = state["rng"][dist.get_rank() if dist.is_initialized() else 0]
         torch.set_rng_state(rng["cpu"])
         torch.cuda.set_rng_state(rng["cuda"])
+        optimizer_steps = [float(s["step"]) for s in optimizer.state.values()]
+        assert optimizer_steps and min(optimizer_steps) == max(optimizer_steps) == start
+        if primary():
+            print(json.dumps({"phase": "resumed", "update": start, "optimizer_step": min(optimizer_steps),
+                              "rng_restored": True, "audio_conditioning": "noised_silence"}), flush=True)
     if primary():
         config.save(out / "config.json")
-        print(json.dumps({"phase": "baseline_validation", "world": dp_size * config.sequence_parallel,
+        print(json.dumps({"phase": "ready", "world": dp_size * config.sequence_parallel,
                           "train_windows": sum(row["split"] == "train" for row in rows),
                           "validation_windows": len(validation), "steps": config.steps}), flush=True)
-    validate(model, runtime, decoder, validation, cache, out, start, dp_rank, dp_size, config)
+    if not (args.resume and args.skip_initial_validation):
+        validate(model, runtime, decoder, validation, cache, out, start, dp_rank, dp_size, config)
     if start == 0:
         save_checkpoint(model, optimizer, 0, out, config)
     update = start
@@ -154,49 +164,57 @@ def main():
         started = time.monotonic()
         optimizer.zero_grad(set_to_none=True)
         losses = []
+        phases = dict(input=0.0, forward=0.0, backward=0.0, gradient_sync=0.0, optimizer=0.0)
+        used = []
         for micro in range(config.accumulation):
+            begin = time.monotonic()
             rng = random.Random(config.seed + (update * config.accumulation + micro) * dp_size + dp_rank)
             row = samples.choose(rng)
             sample = torch.load(cache / row["file"], map_location="cpu", weights_only=False)
-            seed = rng.choice(config.trajectory_seeds)
-            trajectory = audio_trajectory(model, runtime, sample, cache / row["file"], seed, group)
+            seed = rng.choice(config.training_seeds)
             prepared = move(sample["prepared"][seed], device)
             index = rng.randrange(config.inference_steps)
-            audio = trajectory[index].to(device)
-            video, audio, target = training_inputs(prepared, sample["target"].to(device), audio, index)
-            teacher = None
-            if config.preserve_weight:
-                with torch.no_grad(), without_adapter(model):
-                    teacher = runtime.predict(model, prepared, video, audio, index)[0][0]
+            video, audio, target = training_inputs(prepared, sample["target"].to(device), silence[row["frames"]], index)
             torch.cuda.synchronize()
+            phases["input"] += time.monotonic() - begin
+            used.append(dict(id=row["id"], frames=row["frames"], seed=seed, timestep_index=index,
+                             tokens=prepared["token_tags"].numel()))
+            begin = time.monotonic()
             with decfg_mode(model, bool(config.decfg_path)):
                 with torch.autograd.graph.save_on_cpu(pin_memory=True):
                     prediction = runtime.predict(model, prepared, video, audio, index)[0][0]
                 torch.cuda.synchronize()
                 nv = prepared["num_condition_video_rows"]
                 loss = video_loss(prediction[nv:], target, sample["metadata"])
-                if teacher is not None:
-                    loss = loss + config.preserve_weight * video_loss(prediction[nv:], teacher[nv:], sample["metadata"])
+                phases["forward"] += time.monotonic() - begin
+                begin = time.monotonic()
                 (loss / config.accumulation).backward()
             torch.cuda.synchronize()
+            phases["backward"] += time.monotonic() - begin
             losses.append(float(loss.detach()))
-            del prediction, loss, prepared, video, audio, target, trajectory, sample, teacher
+            del prediction, loss, prepared, video, audio, target, sample
+        begin = time.monotonic()
         average_gradients(parameters)
         torch.cuda.synchronize()
         norm = clip_gradients(parameters, config.gradient_clip, shard_group)
+        phases["gradient_sync"] = time.monotonic() - begin
+        begin = time.monotonic()
         for param_group in optimizer.param_groups:
             param_group["lr"] = config.lr(update)
         optimizer.step()
         torch.cuda.synchronize()
+        phases["optimizer"] = time.monotonic() - begin
         mean_loss = torch.tensor(sum(losses) / len(losses), device=device)
         if dist.is_initialized():
             dist.all_reduce(mean_loss)
             mean_loss.div_(dist.get_world_size())
-        if primary():
+        if leader:
             record = {"update": update, "loss": float(mean_loss), "grad_norm": float(norm),
                       "lr": config.lr(update), "seconds": time.monotonic() - started,
-                      "decfg_training_only": bool(config.decfg_path)}
-            with (out / "train.jsonl").open("a") as stream:
+                      "decfg_training_only": bool(config.decfg_path), "audio_conditioning": "noised_silence",
+                      "teacher_forwards": 0, "phase_seconds": phases, "samples": used,
+                      "dp_rank": dp_rank, "time": time.time(), "attention_backend": config.attention_backend}
+            with (out / ("train.jsonl" if primary() else f"train_dp{dp_rank}.jsonl")).open("a") as stream:
                 stream.write(json.dumps(record) + "\n")
             print(json.dumps(record), flush=True)
         if config.validate_at(update):

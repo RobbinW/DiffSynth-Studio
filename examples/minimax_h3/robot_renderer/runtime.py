@@ -53,30 +53,33 @@ class NativeRuntime:
                      **{key: state[key] for key in ("token_tags", "position_ids", "video_indices", "audio_indices", "text_indices")})
 
     @torch.no_grad()
-    def sample(self, model, prepared, metadata, record_audio=False):
+    def sample(self, model, prepared, metadata):
         self.pipe.scheduler.set_timesteps(self.steps + 1, device=self.device)
         self.pipe.audio_scheduler.set_timesteps(self.steps + 1, device=self.device)
         state = move(prepared, self.device)
         video, audio = state["latents"].clone(), state["audio_latents"].clone()
         nv, na = state["num_condition_video_rows"], state["num_condition_audio_rows"]
-        trajectory = []
         with decfg_mode(model, False):
             for index, (tv, ta) in enumerate(zip(state["timesteps"], state["audio_timesteps"])):
-                if record_audio:
-                    trajectory.append(audio.cpu().clone())
                 vp, ap = self.predict(model, state, video, audio, index)
                 video[nv:] = self.pipe.scheduler.step(vp[0, nv:].float(), tv, video[nv:], return_dict=False)[0]
                 audio[na:] = self.pipe.audio_scheduler.step(ap[0, na:].float(), ta, audio[na:], return_dict=False)[0]
         result = unpack(video[nv:], latent_frames(metadata["frames"]), metadata["height"] // 16, metadata["width"] // 16)
-        return result, trajectory
+        return result, audio
 
 
-def training_inputs(prepared, target, audio, index):
-    """Noised real video and the frozen native sampler's corresponding audio state."""
+def training_inputs(prepared, target, silence, index):
+    """Noised real video and noised missing-audio silence on their native grids."""
     video = prepared["latents"].clone()
     nv = prepared["num_condition_video_rows"]
     clean = patchify_video_latents(target, (1, 2, 2)).float()
     noise = video[nv:].clone()
     t = prepared["timesteps"][index]
     video[nv:] = t * clean + (1 - t) * noise
+    audio = prepared["audio_latents"].clone()
+    na = prepared["num_condition_audio_rows"]
+    if silence.shape != audio[na:].shape:
+        raise ValueError(f"Silence shape {silence.shape} does not match audio target {audio[na:].shape}")
+    ta = prepared["audio_timesteps"][index]
+    audio[na:] = ta * silence + (1 - ta) * audio[na:]
     return video, audio, clean - noise

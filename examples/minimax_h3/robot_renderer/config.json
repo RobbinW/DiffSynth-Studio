@@ -9,18 +9,18 @@
   "sequence_parallel": 8,
   "weight_decay": 0.01,
   "gradient_clip": 1.0,
-  "preserve_weight": 0.0,
   "inference_steps": 50,
   "seed": 42,
-  "trajectory_seeds": [
-    42,
-    2026
-  ],
   "validation_seeds": [
     42,
     2026,
     31415
   ],
   "validate_every": 500,
-  "decfg_path": null
+  "decfg_path": null,
+  "training_seeds": [
+    42,
+    2026
+  ],
+  "attention_backend": "stable"
 }

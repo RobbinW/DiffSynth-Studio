@@ -19,7 +19,9 @@ class StableAttention(torch.autograd.Function):
         grad = gradient.float()
         scale = q.shape[-1] ** -0.5
         dq, dk, dv = torch.empty_like(q), torch.zeros_like(k), torch.zeros_like(v)
-        chunk = max(1, min(256, 32_000_000 // (q.shape[0] * q.shape[1] * k.shape[-2])))
+        # Larger aligned GEMMs retain the FP32 analytical gradient, while
+        # avoiding thousands of tiny, unaligned kernels on long native clips.
+        chunk = max(64, min(1024, 128_000_000 // (q.shape[0] * q.shape[1] * k.shape[-2])) // 64 * 64)
         for start in range(0, q.shape[-2], chunk):
             stop = min(start + chunk, q.shape[-2])
             query, output_grad = q[:, :, start:stop], grad[:, :, start:stop]
@@ -33,8 +35,9 @@ class StableAttention(torch.autograd.Function):
 
 
 class Processor:
-    def __init__(self, parallel=None):
+    def __init__(self, parallel=None, backend="stable"):
         self.parallel = parallel
+        self.backend = backend
 
     def __call__(self, attn, hidden_states, rotary_emb=None, attention_mask=None):
         if attention_mask is not None:
@@ -46,7 +49,8 @@ class Processor:
             q, k = (_apply_rotary_emb(x, *rotary_emb) for x in (q, k))
         if self.parallel is not None:
             q, k, v = self.parallel.to_heads(torch.cat((q, k, v), dim=-1)).chunk(3, dim=-1)
-        output = StableAttention.apply(*(x.transpose(1, 2) for x in (q, k, v)))
+        attention = StableAttention.apply if self.backend == "stable" else torch.nn.functional.scaled_dot_product_attention
+        output = attention(*(x.transpose(1, 2) for x in (q, k, v)))
         output = output.transpose(1, 2)
         if self.parallel is not None:
             output = self.parallel.to_sequence(output)
@@ -56,16 +60,18 @@ class Processor:
 class SequenceParallel:
     """Uneven Ulysses exchange: sequence-sharded FFNs, head-sharded attention."""
 
-    def __init__(self, model, group=None):
+    def __init__(self, model, group=None, backend="stable"):
+        if backend not in ("stable", "sdpa"):
+            raise ValueError(f"Unknown attention backend: {backend}")
         self.group = group
         self.size = dist.get_world_size(group) if group is not None else 1
         self.rank = dist.get_rank(group) if group is not None else 0
         self.length = 0
         for module in model.modules():
             if type(module).__name__ == "MiniMaxH3Attention":
-                module.set_processor(Processor())
+                module.set_processor(Processor(backend=backend))
         for block in model.transformer_blocks:
-            block.attn.set_processor(Processor(self) if self.size > 1 else Processor())
+            block.attn.set_processor(Processor(self if self.size > 1 else None, backend))
         if self.size > 1:
             model.rope.register_forward_hook(self.rope)
             model.transformer_blocks[0].register_forward_pre_hook(self.first_block)

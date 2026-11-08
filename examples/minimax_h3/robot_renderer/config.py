@@ -17,10 +17,10 @@ class Config:
     sequence_parallel: int = 8
     weight_decay: float = 0.01
     gradient_clip: float = 1.0
-    preserve_weight: float = 0.0
+    attention_backend: str = "stable"
     inference_steps: int = 50
     seed: int = 42
-    trajectory_seeds: tuple = (42, 2026)
+    training_seeds: tuple = (42, 2026)
     validation_seeds: tuple = (42, 2026, 31415)
     validate_every: int = 500
     decfg_path: str | None = None

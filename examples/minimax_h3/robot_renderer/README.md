@@ -17,7 +17,7 @@ experiment loaders. No SolarRenderer control weights are loaded by this recipe.
 | Frozen | H3 base, FFNs, text refiners, encoders, VAE |
 | Optimizer | FP32 AdamW; LR5e-5, linear warmup100, then constant5e-5; betas0.9/0.95, eps1e-8, decay0.01 |
 | Batch on32cards | SP8×DP4×accumulation2 =8 clips/update |
-| Loss | Video-only data-ward flow matching; optional preservation weight0.1, default0 |
+| Loss | Video-only data-ward flow matching; no teacher/anchor loss |
 | DeCFG | Set `decfg_path` to the historical frozen Ref2VA adapter; active only in supervised training |
 | Inverse-CFG / extra inference CFG | Disabled |
 | Validation and checkpoint | At0/100/250 and every500updates;50 actual model evaluations |
@@ -87,48 +87,25 @@ conditioning and the original free video-reference layout. Real targets and
 proxies share geometry/time transforms and never pass through different lossy
 transport encodings.
 
-Training memoizes the **frozen native joint sampler's audio state before each of its50 steps**
-when a clip/seed is first sampled. The first visit therefore includes a frozen teacher rollout.
-This avoids an exhaustive two-seed teacher pass over every training window before launch.
-For optional offline cache warming:
+Training uses the official missing-audio convention: a zero stereo waveform is
+encoded once per legal duration by the frozen audio VAE. The resulting clean
+silence latents are noised on the native audio grid at the selected time index.
+Only video loss is optimized. There is no teacher model forward, no online audio
+trajectory, and no preservation/anchor loss. Existing image/video/text caches are
+reused. The native video/audio grids retain their separate shifts12/3.
+
+Before a manual launch, create the tiny shared audio cache once (the cluster
+launcher does this automatically and copies it to all nodes):
 
 ```bash
-torchrun --standalone --nproc_per_node=8 \
-  -m examples.minimax_h3.robot_renderer.trajectories \
-  --model /models/MiniMax-H3 --cache /data/h3-cache
+python -m examples.minimax_h3.robot_renderer.audio --model /models/MiniMax-H3 \
+  --out /data/h3-cache/silence.pt --frames 5 22 39 56 73 90 107 124 141 158
 ```
 
-Training samples a time index uniformly on that native50-step grid, reuses its
-exact initial video noise, and pairs the noised real target with the corresponding
-frozen native audio state. This replaces the old noised-silence input. It is
-discrete-grid task flow matching, not audio supervision or four-step distillation.
-Two trajectory seeds are available per clip; only requested trajectories are cached. The seed bank's coverage and generation
-quality still need validation on the real robot data; the implementation alone
-does not establish that earlier regression is solved.
-
-The supplied controller launcher reuses the established container, Python and RCCL
-settings. It first prepares native caches across32 workers, then replicates all training tensors for continuous runs (or only the exact scheduled
-tensors for a finite budget), and submits all four training workers.
-When DeCFG is configured, a full33B eight-card fixed-input probe must pass before
-submission: repeatable backward, reversible DeCFG switching, frozen adapter integrity
-and a discarded task-optimizer update. `--prepared` reuses completed preparation shards. Every node retains the complete index; sampling is still
-from the full manifest. Use a fresh remote root for each immutable input/config snapshot.
-
-```bash
-python -m examples.minimax_h3.robot_renderer.launch_cluster \
-  --nodes DCU3_direct DCU4_direct DCU5_direct DCU6_direct \
-  --peers hygon3 hygon4 hygon5 hygon6 \
-  --manifest /data/pairs.jsonl \
-  --remote-root /data02/dex/h3_run_158f \
-  --container-root /train/h3_run_158f --status /runs/h3_launch
-```
-
-The controller writes its current phase and exact commands to`launch.json`.
-`preparing_native_158f_cache` is preparation; `training_submitted` records submitted
-processes. Actual optimizer progress appears only in`run/train.jsonl`. Validation
-uses two distinct groups per source, at three fixed seeds, including a step0 baseline.
-Each validation call also generates158frames and trims unsupported tail output;
-only training tails use shorter minimally padded legal lengths.
+Each microbatch has exactly one supervised model forward and one backward.
+`training_seeds` selects the existing prepared noise fixtures. Validation uses
+50 sampler steps and three fixed seeds, independent of training step cost.
+The monitor labels step0 as the untrained baseline.
 
 For manual submission, on each of four8-card nodes, set `NODE_RANK`, `MASTER_ADDR`, then run:
 
@@ -172,7 +149,7 @@ torchrun --standalone --nproc_per_node=2 \
 ```
 
 The checks cover minimal tail padding, boundary coverage, masked tail loss,
-native velocity sign, audio-state identity, adapter initialization/frozen base,
+native velocity sign, separate audio noising and preserved audio condition rows, adapter initialization/frozen base,
 analytical attention gradients, uneven SP gradients and checkpoint recomputation.
 On a real158-frame cache, full33B FSDP2 repeated backward also produced identical
 losses and gradients. The old FSDP1 frozen/ignored-adapter wrapping did not qualify
@@ -200,7 +177,7 @@ the trunk and text-refiner attention/MLP projections. QKV output rows are deinte
 per head and SwiGLU output halves are swapped for the Diffusers layout. Scale is1;
 no base weights are merged or repeatedly added/subtracted. Only the new rank32
 attention task adapters are optimized and saved. DeCFG is off for baseline validation,
-all sampled videos, frozen-native audio trajectories and deployment.
+all sampled videos and deployment.
 
 The repository default leaves the external checkpoint path unset; the cluster run
 records its explicit path and SHA256 in the qualification artifact. Adding DeCFG
@@ -228,3 +205,18 @@ Open `http://127.0.0.1:8789/live/`. Use a range-capable HTTP server for video
 seeking. `--once` collects one snapshot; otherwise keep the monitor running.
 The browser shows Beijing time. Checkpoint0 is explicitly labelled untrained;
 PSNR differences are supporting metrics, not a claim of perceptual improvement.
+
+## Attention throughput and resuming a recipe change
+
+`attention_backend: "stable"` retains the analytical FP32 backward with larger,
+aligned query chunks. `"sdpa"` uses the native fused backward and must qualify on
+the actual DCU stack: full33B repeated gradients, comparison to the analytical
+reference, frozen DeCFG preservation, and an optimizer update. The cluster
+launcher performs this check before submission and loads the resume adapter into
+the probe. Single-layer speed measurements alone do not qualify a backend.
+
+The training log includes input/forward/backward/gradient-sync/optimizer timings,
+sampled clips, and `teacher_forwards: 0`. Other data replicas write `train_dp*.jsonl`.
+Use `--resume /path/to/checkpoint --skip-initial-validation` for a maintenance
+restart without repeating an unscheduled validation. Optimizer step and RNG are
+restored; checkpoint/test steps100/250/500 and every500 remain unchanged.

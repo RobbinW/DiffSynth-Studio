@@ -54,9 +54,9 @@ class NumericTests(unittest.TestCase):
 
         zero_velocity = ZeroVelocity()
 
-        first, trajectory = runtime.sample(zero_velocity, prepared, dict(frames=5, height=32, width=32), True)
+        first, actual_audio = runtime.sample(zero_velocity, prepared, dict(frames=5, height=32, width=32))
         second, _ = runtime.sample(zero_velocity, prepared, dict(frames=5, height=32, width=32))
-        self.assertEqual(len(trajectory), 50)
+        torch.testing.assert_close(actual_audio, audio)
         torch.testing.assert_close(first, second, atol=0, rtol=0)
         torch.testing.assert_close(first, unpack(video, 2, 2, 2))
 
@@ -92,13 +92,16 @@ class NumericTests(unittest.TestCase):
         clean = patchify_video_latents(target, (1, 2, 2))
         noise = torch.randn_like(clean)
         condition = torch.randn(3, clean.shape[-1])
+        audio_noise, silence = torch.randn(7, 32), torch.randn(5, 32)
         prepared = {"latents": torch.cat((condition, noise)), "num_condition_video_rows": 3,
-                    "timesteps": torch.tensor([0.25])}
-        audio = torch.randn(7, 32)
-        video, actual_audio, velocity = training_inputs(prepared, target, audio, 0)
+                    "timesteps": torch.tensor([0.25]), "audio_latents": audio_noise,
+                    "num_condition_audio_rows": 2, "audio_timesteps": torch.tensor([0.6])}
+        video, actual_audio, velocity = training_inputs(prepared, target, silence, 0)
         torch.testing.assert_close(video[:3], condition)
         torch.testing.assert_close(video[3:] + 0.75 * velocity, clean)
-        self.assertIs(actual_audio, audio)
+        torch.testing.assert_close(actual_audio[:2], audio_noise[:2])
+        torch.testing.assert_close(actual_audio[2:], .6 * silence + .4 * audio_noise[2:])
+        torch.testing.assert_close(prepared["audio_latents"], audio_noise)
         torch.testing.assert_close(unpack(clean, 2, 4, 4), target)
 
     def test_tail_padding_cannot_reduce_reported_video_loss(self):

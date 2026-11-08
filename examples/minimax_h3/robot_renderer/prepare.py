@@ -42,7 +42,7 @@ def main():
                 proxy_clip = pad_tail(proxy[window.start:window.start + window.valid], window.frames)
                 raw = move(encoder.conditions(real_clip[0], proxy_clip, metadata, row["prompt"]), "cpu")
                 prepared = {seed: runtime.prepare(raw, metadata, seed)
-                            for seed in sorted(set(config.trajectory_seeds) | set(config.validation_seeds))}
+                            for seed in sorted(set(config.training_seeds) | set(config.validation_seeds))}
                 temporary = target_path.with_suffix(".tmp")
                 torch.save({"metadata": metadata, "target": encoder.video(real_clip, metadata).cpu(),
                             "prepared": prepared}, temporary)

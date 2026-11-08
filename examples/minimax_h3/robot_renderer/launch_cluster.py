@@ -26,6 +26,7 @@ ENV = {"NCCL_SOCKET_IFNAME": "eth0", "NCCL_IB_GID_INDEX": "3",
        "NCCL_IB_TIMEOUT": "22", "GLOO_SOCKET_IFNAME": "eth0",
        "NCCL_DEBUG": "WARN", "OMP_NUM_THREADS": "4", "HF_HUB_OFFLINE": "1",
        "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+       "HSA_FORCE_FINE_GRAIN_PCIE": "1",
        "PYTORCH_ALLOC_CONF": "expandable_segments:True", "PYTHONUNBUFFERED": "1"}
 
 
@@ -49,6 +50,8 @@ def main():
     parser.add_argument("--port", type=int, default=29816)
     parser.add_argument("--config")
     parser.add_argument("--prepared", action="store_true", help="Reuse completed preparation shards")
+    parser.add_argument("--resume", help="Container checkpoint folder available on all nodes")
+    parser.add_argument("--skip-initial-validation", action="store_true")
     parser.add_argument("--revision", help="Published source commit when the controller is outside a Git checkout")
     parser.add_argument("--status", required=True)
     args = parser.parse_args()
@@ -136,18 +139,30 @@ def main():
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(distribute, range(4)))
         master = run(["ssh", args.nodes[0], "hostname -I"]).split()[0]
+        record("encoding_missing_audio_silence")
+        command = container(["-m", MODULE+".audio", "--model", args.model,
+            "--out", cr+"/cache/silence.pt", "--fps", str(config.fps),
+            "--frames", *map(str, sorted({row["frames"] for row in rows}))], HIP_VISIBLE_DEVICES="0")
+        run(["ssh", args.nodes[0], shlex.join(command)+" > "+shlex.quote(root+"/logs/silence.log")+" 2>&1"])
+        for node in args.nodes[1:]:
+            run(["ssh", node, shlex.join(["rsync", "-r", "--checksum",
+                args.peers[0]+":"+root+"/cache/silence.pt", root+"/cache/"])])
         if config.decfg_path:
             record("qualifying_training_only_decfg")
             command = container(["-m", "torch.distributed.run", "--standalone", "--nproc_per_node=8",
                 "-m", MODULE+".tests.check_decfg", "--model", args.model,
                 "--sample", cr+"/cache/"+validation[0]["file"], "--config", cr+"/config.json",
-                "--out", cr+"/decfg_qualification.json"])
+                "--out", cr+"/decfg_qualification.json",
+                *(["--adapter", args.resume+"/adapter.safetensors"] if args.resume else [])])
             run(["ssh", args.nodes[0], shlex.join(command)+" > "+shlex.quote(root+"/logs/decfg_qualification.log")+" 2>&1"])
         for rank, node in enumerate(args.nodes):
+            resume = ["--resume", args.resume] if args.resume else []
+            if args.skip_initial_validation:
+                resume.append("--skip-initial-validation")
             command = container(["-m", "torch.distributed.run", "--nnodes=4", "--nproc_per_node=8",
                 "--node_rank="+str(rank), "--master_addr="+master, "--master_port="+str(args.port),
                 "-m", MODULE+".train", "--model", args.model, "--cache", cr+"/cache",
-                "--out", cr+"/run", "--config", cr+"/config.json"])
+                "--out", cr+"/run", "--config", cr+"/config.json", *resume])
             remote = "nohup "+shlex.join(command)+" > "+shlex.quote(root+f"/logs/train_node{rank}.log")+" 2>&1 </dev/null & echo $!"
             pid = run(["ssh", node, remote])
             workers.append(dict(node=node, pid=pid, command=command))

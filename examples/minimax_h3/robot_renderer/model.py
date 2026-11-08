@@ -65,7 +65,8 @@ def add_adapter(model, rank):
     return model
 
 
-def load_model(path, device, rank=32, group=None, shard=False, shard_group=None, decfg_path=None):
+def load_model(path, device, rank=32, group=None, shard=False, shard_group=None, decfg_path=None,
+               attention_backend="stable"):
     model = MiniMaxH3Transformer3DModel.from_pretrained(
         path, subfolder="transformer_ref", torch_dtype=torch.bfloat16, local_files_only=True
     )
@@ -77,7 +78,7 @@ def load_model(path, device, rank=32, group=None, shard=False, shard_group=None,
     if decfg_path:
         from .decfg import attach_decfg
         attach_decfg(model, decfg_path)
-    SequenceParallel(model, group)
+    SequenceParallel(model, group, attention_backend)
     if not shard:
         return model.to(device)
     mesh = DeviceMesh.from_group(shard_group, "cuda")
