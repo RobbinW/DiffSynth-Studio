@@ -1,0 +1,1327 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>H3 · 训练观察</title>
+    <style>
+      :root {
+        --paper: #f6f5f0;
+        --ink: #18382e;
+        --muted: #728078;
+        --line: #dce1d8;
+        --green: #27654c;
+        --lime: #d8ed9b;
+        --amber: #ab572e;
+        --white: #fffefa;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family:
+          "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-size: 14px;
+      }
+      button,
+      select {
+        font: inherit;
+      }
+      button,
+      a,
+      select {
+        touch-action: manipulation;
+      }
+      button,
+      select {
+        cursor: pointer;
+      }
+      a {
+        color: inherit;
+        text-underline-offset: 4px;
+      }
+      button:focus-visible,
+      a:focus-visible,
+      select:focus-visible {
+        outline: 3px solid #a4c451;
+        outline-offset: 4px;
+      }
+      button {
+        border: 1px solid var(--line);
+        background: var(--white);
+        color: var(--ink);
+        border-radius: 6px;
+        padding: 8px 13px;
+      }
+      button:hover {
+        border-color: var(--green);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+      .shell {
+        max-width: 1440px;
+        margin: auto;
+        padding: 0 48px;
+      }
+      header {
+        height: 84px;
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid var(--line);
+        gap: 30px;
+      }
+      .brand {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        text-decoration: none;
+      }
+      .brand b {
+        background: var(--ink);
+        color: var(--lime);
+        font:
+          700 21px Georgia,
+          serif;
+        letter-spacing: -2px;
+        padding: 9px 12px;
+        border-radius: 3px;
+      }
+      .brand span {
+        font-weight: 600;
+        letter-spacing: 2px;
+      }
+      nav {
+        display: flex;
+        gap: 24px;
+        margin-left: 25px;
+      }
+      nav a {
+        font-size: 13px;
+        text-decoration: none;
+        color: var(--muted);
+      }
+      nav a:hover {
+        color: var(--green);
+      }
+      .refresh {
+        margin-left: auto;
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .refresh button {
+        background: none;
+        padding: 6px 12px;
+      }
+      .hero {
+        padding: 38px 0 26px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 12px;
+      }
+      .hero h1 {
+        font-weight: 500;
+        font-size: 36px;
+        letter-spacing: -1px;
+        margin: 0 0 12px;
+      }
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.8;
+      }
+      .badge {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        background: #e7eddc;
+        border: 1px solid #d7e3c9;
+        padding: 8px 13px;
+        border-radius: 30px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #4a8053;
+      }
+      .badge.bad {
+        background: #fae8dc;
+        border-color: #e6c5ad;
+        color: #9d4528;
+      }
+      .bad .dot {
+        background: #b56039;
+      }
+      .syncnote {
+        display: none;
+        margin-bottom: 18px;
+        padding: 13px 18px;
+        background: #fff0d9;
+        border: 1px solid #e4c18a;
+        color: #864c15;
+        line-height: 1.7;
+      }
+      .overview {
+        display: grid;
+        grid-template-columns: 1.2fr 1.5fr 1fr;
+        border: 1px solid var(--line);
+        background: var(--white);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .overview > div {
+        padding: 28px 30px;
+        border-right: 1px solid var(--line);
+      }
+      .overview > div:last-child {
+        border: 0;
+      }
+      .label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .step-number {
+        font-size: 72px;
+        line-height: 1.15;
+        letter-spacing: -5px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+      .step-number small {
+        font-size: 14px;
+        letter-spacing: 0;
+        margin-left: 12px;
+        font-weight: 400;
+        color: var(--muted);
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.8;
+      }
+      .next-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 14px 0;
+      }
+      .next-top strong {
+        font-size: 25px;
+        font-weight: 500;
+      }
+      .progress {
+        height: 7px;
+        background: #e8eddf;
+        border-radius: 4px;
+        overflow: hidden;
+        margin: 14px 0;
+      }
+      .progress i {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--green);
+        transition: width 1s;
+      }
+      .mini-stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 22px 12px;
+      }
+      .mini-stats strong {
+        display: block;
+        font-size: 22px;
+        font-weight: 500;
+        margin: 9px 0 2px;
+        font-variant-numeric: tabular-nums;
+      }
+      .nodes {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .node {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 15px 18px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #eef0e9;
+      }
+      .node b {
+        font-size: 13px;
+      }
+      .node small {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 5px;
+      }
+      .node-status {
+        font-size: 12px;
+        text-align: right;
+      }
+      .node.off {
+        border-color: #d6aa81;
+        background: #fff0dd;
+      }
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 38px 0 18px;
+        gap: 18px;
+      }
+      .section-head h2 {
+        font-weight: 500;
+        font-size: 23px;
+        margin: 0;
+        letter-spacing: -0.5px;
+      }
+      .section-head .sub {
+        margin-top: 7px;
+      }
+      .ranges {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        background: #e8ece3;
+        border-radius: 7px;
+      }
+      .ranges button {
+        font-size: 12px;
+        background: none;
+        border: 0;
+        padding: 7px 12px;
+      }
+      .ranges button.active {
+        background: var(--white);
+        box-shadow: 0 1px 3px #19382e15;
+      }
+      .charts {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .chart-card {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 22px 24px 15px;
+        min-width: 0;
+        position: relative;
+      }
+      .chart-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .chart-head strong {
+        font-size: 25px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+      .chart-head span {
+        font-size: 13px;
+      }
+      .chart {
+        display: block;
+        width: 100%;
+        height: auto;
+        min-height: 160px;
+        margin-top: 16px;
+        overflow: visible;
+      }
+      .legend {
+        display: flex;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .legend span:before {
+        content: "";
+        display: inline-block;
+        width: 18px;
+        height: 2px;
+        background: #9fae9b;
+        margin: 0 6px 3px 0;
+      }
+      .legend span:last-child:before {
+        background: var(--green);
+      }
+      .chart-card.amber .legend span:last-child:before {
+        background: var(--amber);
+      }
+      .tooltip {
+        position: absolute;
+        pointer-events: none;
+        display: none;
+        right: 24px;
+        top: 62px;
+        background: var(--ink);
+        color: #fff;
+        padding: 7px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        z-index: 2;
+      }
+      .context-note {
+        font-size: 12px;
+        color: var(--muted);
+        margin: 13px 0 0;
+        line-height: 1.8;
+      }
+      .recipe {
+        margin-top: 28px;
+        padding: 20px 24px;
+        background: #e9eddf;
+        border-radius: 7px;
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        flex-wrap: wrap;
+      }
+      .recipe > strong {
+        font-size: 12px;
+        letter-spacing: 1px;
+      }
+      .recipe div {
+        font-size: 12px;
+      }
+      .recipe div span {
+        color: var(--muted);
+        display: block;
+        margin-bottom: 5px;
+      }
+      .recipe a {
+        font-size: 12px;
+        margin-left: auto;
+      }
+      .filters {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .filters label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      select {
+        margin-left: 7px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--white);
+        padding: 8px;
+        color: var(--ink);
+        max-width: 230px;
+      }
+      .sources {
+        display: flex;
+        gap: 6px;
+      }
+      .sources button {
+        font-size: 12px;
+        padding: 7px 13px;
+        background: none;
+      }
+      .sources button.active {
+        background: var(--ink);
+        color: white;
+        border-color: var(--ink);
+      }
+      .validation-note {
+        padding: 16px 20px;
+        background: #ecedde;
+        border-left: 3px solid #899859;
+        margin: 18px 0;
+        font-size: 13px;
+        line-height: 1.8;
+      }
+      .validation-note.trained {
+        background: #e1eee5;
+        border-color: var(--green);
+      }
+      .video-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 22px;
+      }
+      .video-card {
+        min-width: 0;
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .video-title {
+        padding: 17px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }
+      .video-title b {
+        font-weight: 600;
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+      .video-title small {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .dataset {
+        font-size: 10px;
+        letter-spacing: 1px;
+        background: #e8ede3;
+        border-radius: 3px;
+        padding: 5px 7px;
+        white-space: nowrap;
+      }
+      .video-area {
+        background: #1b2420;
+        display: grid;
+        position: relative;
+      }
+      .video-area.paired {
+        grid-template-columns: 1fr 1fr;
+      }
+      .video-cell {
+        min-width: 0;
+        position: relative;
+      }
+      .video-cell em {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: #11291edb;
+        color: #f1f1e6;
+        padding: 4px 7px;
+        border-radius: 3px;
+        font-size: 10px;
+        font-style: normal;
+        z-index: 1;
+      }
+      video {
+        display: block;
+        width: 100%;
+        height: 250px;
+        object-fit: contain;
+        background: #1b2420;
+      }
+      .video-foot {
+        padding: 12px 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .video-foot button,
+      .video-foot a {
+        font-size: 11px;
+      }
+      .empty {
+        padding: 40px;
+        text-align: center;
+        color: var(--muted);
+        border: 1px dashed var(--line);
+        grid-column: 1/-1;
+      }
+      .detail {
+        margin: 34px 0 20px;
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+      }
+      .detail summary {
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .detail dl {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 18px;
+        padding: 10px 0;
+      }
+      .detail dt {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .detail dd {
+        margin: 6px 0;
+        font-size: 13px;
+      }
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        margin: 25px 0 40px;
+        padding-top: 20px;
+        border-top: 1px solid var(--line);
+        font-size: 11px;
+        line-height: 1.8;
+        color: var(--muted);
+      }
+      .monospace {
+        font-family: "SFMono-Regular", Consolas, monospace;
+      }
+      @media (min-width: 1550px) {
+        .shell {
+          max-width: 1510px;
+        }
+        video {
+          height: 290px;
+        }
+      }
+      @media (max-width: 1000px) {
+        .shell {
+          padding: 0 24px;
+        }
+        .overview {
+          grid-template-columns: 1fr 1.4fr;
+        }
+        .overview > div:last-child {
+          grid-column: 1/-1;
+          border-top: 1px solid var(--line);
+        }
+        .mini-stats {
+          grid-template-columns: repeat(4, 1fr);
+        }
+        nav {
+          display: none;
+        }
+        .nodes {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .recipe {
+          gap: 20px;
+        }
+        .video-grid {
+          gap: 14px;
+        }
+      }
+      @media (max-width: 640px) {
+        .shell {
+          padding: 0 16px;
+        }
+        header {
+          height: 70px;
+          gap: 10px;
+        }
+        .brand span {
+          font-size: 12px;
+          letter-spacing: 0;
+        }
+        .refresh span {
+          display: none;
+        }
+        .hero {
+          align-items: flex-start;
+          padding: 27px 0 20px;
+        }
+        .hero h1 {
+          font-size: 27px;
+        }
+        .hero p {
+          font-size: 12px;
+        }
+        .hero .badge {
+          font-size: 10px;
+          padding: 6px 8px;
+        }
+        .overview {
+          grid-template-columns: 1fr;
+        }
+        .overview > div {
+          padding: 20px;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .overview > div:last-child {
+          border: 0;
+        }
+        .step-number {
+          font-size: 60px;
+        }
+        .mini-stats {
+          grid-template-columns: 1fr 1fr;
+        }
+        .nodes {
+          gap: 8px;
+        }
+        .node {
+          padding: 12px;
+        }
+        .charts,
+        .video-grid {
+          grid-template-columns: 1fr;
+        }
+        .section-head {
+          align-items: flex-start;
+          flex-wrap: wrap;
+          margin-top: 28px;
+        }
+        .section-head h2 {
+          font-size: 21px;
+        }
+        .recipe {
+          gap: 20px;
+        }
+        .recipe > strong {
+          width: 100%;
+        }
+        .recipe a {
+          margin: 0;
+        }
+        .filters {
+          gap: 12px;
+        }
+        .sources {
+          flex-wrap: wrap;
+        }
+        .sources button {
+          padding: 6px 10px;
+        }
+        video {
+          height: 220px;
+        }
+        .detail dl {
+          grid-template-columns: 1fr 1fr;
+        }
+        footer {
+          flex-direction: column;
+        }
+        .video-title {
+          padding: 14px;
+        }
+        .video-foot {
+          padding: 12px;
+        }
+        .chart-card {
+          padding: 18px;
+        }
+        .chart {
+          min-height: 140px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+        .progress i {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <a class="brand" href="#"><b>H3</b><span>训练观察</span></a>
+        <nav>
+          <a href="#overview">运行状态</a><a href="#curves">训练曲线</a
+          ><a href="#validation">验证视频</a>
+        </nav>
+        <div class="refresh">
+          <span id="syncTime">正在连接训练节点…</span
+          ><button id="refreshButton">刷新状态 ↻</button>
+        </div>
+      </header>
+      <main>
+        <section class="hero" id="overview">
+          <div>
+            <div class="eyebrow">EXPERIMENT / NATIVE REF2VA · 2026.11.08</div>
+            <h1>让运动更准确，让真实感留下。</h1>
+            <p>原始 H3 · 六段式英文提示词 · 158 帧微调</p>
+          </div>
+          <span class="badge" id="status"
+            ><i class="dot"></i><span>正在读取</span></span
+          >
+        </section>
+        <div class="syncnote" id="syncWarning" role="status"></div>
+        <section class="overview" aria-label="训练概况">
+          <div>
+            <div class="label">已完成参数更新</div>
+            <div class="step-number">
+              <span id="step">—</span><small>step</small>
+            </div>
+            <div class="sub" id="lastUpdate">等待日志</div>
+          </div>
+          <div>
+            <div class="label" id="nextLabel">下一次保存与验证</div>
+            <div class="next-top">
+              <strong id="nextStep">—</strong
+              ><span class="sub" id="remaining">—</span>
+            </div>
+            <div class="progress"><i id="progress"></i></div>
+            <div class="sub" id="eta">根据最近 10 步耗时估算</div>
+            <div class="sub">持续训练 · 不设总步数上限</div>
+          </div>
+          <div class="mini-stats">
+            <div>
+              <span class="label">运行卡数</span><strong id="cards">—</strong
+              ><span class="sub">DCU3–6</span>
+            </div>
+            <div>
+              <span class="label">近期单步</span><strong id="speed">—</strong
+              ><span class="sub">最近 10 步中位数</span>
+            </div>
+            <div>
+              <span class="label">当前学习率</span><strong id="lr">—</strong
+              ><span class="sub" id="warmup">预热 100 步</span>
+            </div>
+            <div>
+              <span class="label">有效 batch</span><strong id="batch">—</strong
+              ><span class="sub">clips / 参数更新</span>
+            </div>
+          </div>
+        </section>
+        <div class="nodes" id="nodes"></div>
+        <section id="curves">
+          <div class="section-head">
+            <div>
+              <h2>训练过程</h2>
+              <div class="sub">保留原始波动，同时展示平滑趋势</div>
+            </div>
+            <div class="ranges" aria-label="曲线范围">
+              <button data-range="20">最近 20 步</button
+              ><button data-range="50">最近 50 步</button
+              ><button class="active" data-range="0">全部</button>
+            </div>
+          </div>
+          <div class="charts">
+            <div class="chart-card">
+              <div class="chart-head">
+                <span>视频训练损失 <span class="sub">/ loss</span></span
+                ><strong id="lossValue">—</strong>
+              </div>
+              <div class="tooltip"></div>
+              <svg
+                id="lossChart"
+                class="chart"
+                role="img"
+                aria-label="视频训练损失随参数更新步数变化"
+              ></svg>
+              <div class="legend">
+                <span>原始值</span><span>EMA 趋势 · α = 0.2</span>
+              </div>
+            </div>
+            <div class="chart-card amber">
+              <div class="chart-head">
+                <span>梯度范数 <span class="sub">/ 裁剪前</span></span
+                ><strong id="gradValue">—</strong>
+              </div>
+              <div class="tooltip"></div>
+              <svg
+                id="gradChart"
+                class="chart"
+                role="img"
+                aria-label="梯度范数随参数更新步数变化"
+              ></svg>
+              <div class="legend">
+                <span>原始值</span><span>EMA 趋势 · α = 0.2</span>
+              </div>
+            </div>
+          </div>
+          <p class="context-note">
+            每步抽取的片段与时间步不同，loss
+            的短期起伏不等于画质变好或变差。效果需用相同片段、相同种子的生成视频判断。
+          </p>
+        </section>
+        <div class="recipe">
+          <strong>当前训练配方</strong>
+          <div><span>输入布局</span>原始 Ref2VA</div>
+          <div><span>提示词</span>英文六段式</div>
+          <div><span>任务 LoRA</span>Attention · Rank 32</div>
+          <div><span>DeCFG</span>训练开启 · 推理关闭</div>
+          <div><span>输出</span>158 帧 / 24 fps</div>
+          <a href="#settings">完整配置 ↗</a>
+        </div>
+        <section id="validation">
+          <div class="section-head">
+            <div>
+              <h2>验证视频</h2>
+              <div class="sub" id="validationSummary">
+                固定片段 × 固定种子，观察运动与外观
+              </div>
+            </div>
+            <div class="filters">
+              <label
+                >Checkpoint<select
+                  id="checkpoint"
+                  aria-label="选择检查点"
+                ></select></label
+              ><label
+                >Seed<select id="seed" aria-label="选择随机种子">
+                  <option>42</option>
+                  <option>2026</option>
+                  <option>31415</option>
+                </select></label
+              >
+            </div>
+          </div>
+          <div class="filters">
+            <div class="sources" aria-label="数据来源筛选">
+              <button class="active" data-source="all">全部</button
+              ><button data-source="agibot">AgiBot</button
+              ><button data-source="droid">DROID</button
+              ><button data-source="rh20t">RH20T</button
+              ><button data-source="robomind">RoboMind</button>
+            </div>
+            <label id="compareLabel" hidden
+              ><input id="compare" type="checkbox" /> 与 step 0 并排对照</label
+            >
+          </div>
+          <div class="validation-note" id="validationNote">
+            正在读取验证结果…
+          </div>
+          <div id="videos" class="video-grid"></div>
+        </section>
+        <details class="detail" id="settings">
+          <summary>训练配置与结果说明</summary>
+          <dl id="configDetails"></dl>
+          <p class="context-note">
+            尾段仅补齐到最近的合法帧数；验证内部生成 158
+            帧，视频文件只保留有效时长。DeCFG
+            权重冻结，仅在训练前向与反向传播中启用。PSNR
+            是辅助像素指标，不能代替对清晰度、动作、接触和闪烁的检查。
+          </p>
+          <a href="snapshot.json" target="_blank" rel="noopener"
+            >查看当前状态数据 ↗</a
+          >
+        </details>
+      </main>
+      <footer>
+        <span
+          >H3 ROBOT RENDERER · 只读观察<br />网页与同步程序不会启动、停止或修改训练。</span
+        ><span
+          >节点状态每 60 秒同步 · 页面每 15 秒读取<br />所有时间均为北京时间 ·
+          <a href="../decfg_comparison/index.html?rank=9"
+            >历史 DeCFG 对比 ↗</a
+          ></span
+        >
+      </footer>
+    </div>
+    <script>
+      let data = null,
+        range = 0,
+        source = "all",
+        videoKey = "",
+        checkpointTouched = false,
+        fetching = false,
+        loadError = "";
+      const $ = (id) => document.getElementById(id),
+        esc = (s) =>
+          String(s ?? "").replace(
+            /[&<>"']/g,
+            (c) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[c],
+          );
+      const time = (t) =>
+        t
+          ? new Intl.DateTimeFormat("zh-CN", {
+              timeZone: "Asia/Shanghai",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              hour12: false,
+            }).format(new Date(t * 1000))
+          : "—";
+      const num = (x, n = 4) => (Number.isFinite(x) ? x.toFixed(n) : "—");
+      const median = (a) => {
+        const b = a.filter(Number.isFinite).sort((a, b) => a - b);
+        return b.length ? b[Math.floor(b.length / 2)] : 0;
+      };
+      const duration = (s) =>
+        s ? `${Math.floor(s / 60)}分${Math.round(s % 60)}秒` : "—";
+      const url = (dir, name) =>
+        dir.split("/").map(encodeURIComponent).join("/") + "/" + name;
+      function nextCheck(step, c) {
+        return [
+          100,
+          250,
+          ...[Math.floor(step / (c.validate_every || 500)) + 1].map(
+            (x) => x * (c.validate_every || 500),
+          ),
+        ]
+          .filter((x) => x > step)
+          .sort((a, b) => a - b)[0];
+      }
+      function freshness() {
+        if (!data) return;
+        const stale = Date.now() / 1000 - data.collected_at > 180;
+        const errors = data.nodes.filter((n) => !n.connected);
+        const last = data.history.at(-1);
+        const inValidation =
+          last &&
+          data.checkpoints.includes(last.update) &&
+          data.nodes
+            .flatMap((n) => n.validations || [])
+            .filter((v) => v.step === last.update).length <
+            data.expected_validation;
+        const slow =
+          data.last_update_at &&
+          !inValidation &&
+          Date.now() / 1000 - data.last_update_at >
+            Math.max(
+              1800,
+              3 * median(data.history.slice(-10).map((x) => x.seconds)),
+            );
+        const message =
+          loadError ||
+          (stale
+            ? "状态同步已超过 3 分钟未更新。以下是最后一次成功读取的数据，不能据此确认当前仍在运行。"
+            : errors.length
+              ? errors.map((n) => n.host.replace("_direct", "")).join("、") +
+                " 暂时无法连接，所示为该节点最后读取的数据。"
+              : slow
+                ? "较长时间没有新的参数更新。进程状态不等同于训练进展，请检查节点日志。"
+                : "");
+        $("syncWarning").style.display = message ? "block" : "none";
+        $("syncWarning").textContent = message;
+        if (message) {
+          $("status").classList.add("bad");
+          $("status").lastElementChild.textContent = "状态待确认";
+        }
+      }
+      function chart(id, key, color) {
+        const all = data.history.filter((r) => Number.isFinite(r[key]));
+        let ema;
+        const points = all.map((r) => ({
+          ...r,
+          ema: (ema = ema == null ? r[key] : 0.2 * r[key] + 0.8 * ema),
+        }));
+        const rows = range ? points.slice(-range) : points;
+        const svg = $(id);
+        if (!rows.length) {
+          svg.innerHTML =
+            '<text x="30" y="70" fill="#728078">等待首次参数更新</text>';
+          return;
+        }
+        const w = 600,
+          h = 225,
+          l = 48,
+          r = 14,
+          t = 14,
+          b = 32;
+        const minX = rows[0].update,
+          maxX = rows.at(-1).update;
+        let lo = Math.min(...rows.flatMap((x) => [x[key], x.ema])),
+          hi = Math.max(...rows.flatMap((x) => [x[key], x.ema]));
+        const pad = (hi - lo || Math.max(hi, 0.01)) * 0.18;
+        lo = Math.max(0, lo - pad);
+        hi += pad;
+        const x = (v) =>
+            l + ((v - minX) / Math.max(1, maxX - minX)) * (w - l - r),
+          y = (v) => h - b - ((v - lo) / (hi - lo)) * (h - t - b);
+        let html = "";
+        for (let i = 0; i < 4; i++) {
+          const v = lo + ((hi - lo) * i) / 3;
+          html += `<line x1="${l}" x2="${w - r}" y1="${y(v)}" y2="${y(v)}" stroke="#e6e9e0"/><text x="${l - 9}" y="${y(v) + 4}" text-anchor="end" fill="#829085" font-size="10">${v.toFixed(3)}</text>`;
+        }
+        for (const v of [
+          ...new Set([minX, Math.round((minX + maxX) / 2), maxX]),
+        ])
+          html += `<text x="${x(v)}" y="${h - 8}" text-anchor="middle" fill="#829085" font-size="10">${v}</text>`;
+        for (const [field, stroke, width, opacity] of [
+          [key, color, 1.4, 0.28],
+          ["ema", color, 2.5, 1],
+        ])
+          html += `<polyline points="${rows.map((d) => `${x(d.update)},${y(d[field])}`).join(" ")}" fill="none" stroke="${stroke}" stroke-width="${width}" opacity="${opacity}" stroke-linecap="round" stroke-linejoin="round"/>`;
+        html += `<circle cx="${x(maxX)}" cy="${y(rows.at(-1).ema)}" r="3" fill="${color}"/>`;
+        svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+        svg.innerHTML = html;
+        svg.onpointermove = (e) => {
+          const box = svg.getBoundingClientRect();
+          const fraction = Math.max(
+            0,
+            Math.min(
+              1,
+              (((e.clientX - box.left) / box.width) * w - l) / (w - l - r),
+            ),
+          );
+          const row = rows[Math.round(fraction * (rows.length - 1))];
+          const tip = svg.previousElementSibling;
+          tip.style.display = "block";
+          tip.textContent = `Step ${row.update} · ${key} ${num(row[key], 5)}`;
+        };
+        svg.onpointerleave = () =>
+          (svg.previousElementSibling.style.display = "none");
+      }
+      function render() {
+        const c = data.config,
+          h = data.history,
+          last = h.at(-1) || {},
+          step = last.update || 0,
+          speed = median(h.slice(-10).map((x) => x.seconds)),
+          next = nextCheck(step, c);
+        const nodes = data.nodes,
+          connected = nodes.every((n) => n.connected),
+          workers = nodes.reduce(
+            (s, n) => s + (n.connected ? n.workers : 0),
+            0,
+          );
+        const checkpoint = Math.max(0, ...data.checkpoints),
+          remoteCount = nodes
+            .flatMap((n) => n.validations || [])
+            .filter((v) => v.step === checkpoint).length;
+        const validating =
+          checkpoint > 0 &&
+          checkpoint === step &&
+          remoteCount < data.expected_validation;
+        const unhealthy =
+          connected && (workers !== 32 || nodes.some((n) => n.errors?.length));
+        $("status").classList.toggle("bad", !connected || unhealthy);
+        $("status").lastElementChild.textContent = !connected
+          ? "连接待确认"
+          : unhealthy
+            ? "需要检查"
+            : validating
+              ? "正在生成验证视频"
+              : "正在训练";
+        $("syncTime").textContent = "同步于 " + time(data.collected_at);
+        $("step").textContent = step.toLocaleString();
+        $("lastUpdate").textContent =
+          "最近参数更新 · " + time(data.last_update_at);
+        $("cards").textContent = workers + " / 32";
+        $("speed").textContent = duration(speed);
+        $("lr").textContent = last.lr?.toExponential(2) || "—";
+        $("warmup").textContent =
+          step < c.warmup
+            ? `预热 ${step} / ${c.warmup} 步`
+            : "预热完成 · 恒定学习率";
+        $("batch").textContent = c.accumulation ? c.accumulation * 4 : "—";
+        $("lossValue").textContent = num(last.loss);
+        $("gradValue").textContent = num(last.grad_norm);
+        $("nextLabel").textContent = validating
+          ? "当前验证进度"
+          : "下一次保存与验证";
+        $("nextStep").textContent = "Step " + (validating ? checkpoint : next);
+        $("remaining").textContent = validating
+          ? `${remoteCount} / ${data.expected_validation} 条视频`
+          : `还差 ${next - step} 次更新`;
+        const previous = [0, 100, 250, ...data.checkpoints]
+          .filter((x) => x <= step)
+          .sort((a, b) => b - a)[0];
+        $("progress").style.width =
+          (validating
+            ? remoteCount / data.expected_validation
+            : (step - previous) / (next - previous)) *
+            100 +
+          "%";
+        $("eta").textContent = validating
+          ? "验证完成后自动继续参数更新"
+          : speed
+            ? `预计开始验证 ${time(Date.now() / 1000 + Math.max(0, (next - step) * speed - (Date.now() / 1000 - data.last_update_at)))} · 粗略估计`
+            : "等待耗时记录";
+        $("nodes").innerHTML = nodes
+          .map(
+            (n, i) =>
+              `<div class="node ${!n.connected || n.workers !== 8 ? "off" : ""}"><div><b>DCU ${i + 3}</b><small>${n.connected ? "节点连接正常" : "连接中断 / 状态未知"}</small></div><div class="node-status">${n.connected ? n.workers : "—"} / 8 进程<small>卡利用率 ${n.connected && n.gpu_busy?.length ? Math.round(n.gpu_busy.reduce((a, b) => a + b, 0) / n.gpu_busy.length) + "%" : "—"}</small></div></div>`,
+          )
+          .join("");
+        chart("lossChart", "loss", "#27654c");
+        chart("gradChart", "grad_norm", "#ab572e");
+        const steps = [
+            ...new Set([
+              0,
+              ...data.checkpoints,
+              ...data.videos.map((v) => v.step),
+            ]),
+          ].sort((a, b) => b - a),
+          old = $("checkpoint").value;
+        const options = steps
+          .map(
+            (s) =>
+              `<option value="${s}">${s === 0 ? "Step 0 · 训练前基线" : "Step " + s + " · 训练后"}</option>`,
+          )
+          .join("");
+        if ($("checkpoint").innerHTML !== options) {
+          $("checkpoint").innerHTML = options;
+          $("checkpoint").value =
+            checkpointTouched && steps.includes(+old) ? old : steps[0];
+        }
+        $("validationSummary").textContent =
+          `每次 ${data.expected_validation || 24} 条视频 · 8 个固定片段 × 3 个随机种子`;
+        const settings = [
+          ["默认输出", `${c.frames} 帧 / ${c.fps} fps`],
+          ["学习率", `${c.learning_rate} · 预热 ${c.warmup} 步`],
+          [
+            "并行方式",
+            `SP ${c.sequence_parallel} × DP 4 × 累积 ${c.accumulation}`,
+          ],
+          ["优化器", "FP32 AdamW · β 0.9 / 0.95"],
+          ["权重衰减", c.weight_decay],
+          ["梯度裁剪", c.gradient_clip],
+          ["验证采样", `${c.inference_steps} 步`],
+          ["保存 / 验证", "0 / 100 / 250 / 500，之后每 500 步"],
+          ["训练预算", c.steps == null ? "持续训练，直到手动停止" : c.steps],
+          ["DeCFG", c.decfg_path ? "冻结 · 仅训练开启" : "关闭"],
+          ["任务 LoRA", `Attention Q/K/V/out · rank ${c.rank}`],
+          ["提示词", "英文六段式；声音 / 配乐为 N/A"],
+        ];
+        $("configDetails").innerHTML = settings
+          .map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`)
+          .join("");
+        renderVideos();
+        freshness();
+      }
+      function renderVideos() {
+        const step = +$("checkpoint").value,
+          seed = +$("seed").value,
+          paired = $("compare").checked && step > 0;
+        const rows = data.videos
+          .filter(
+            (v) =>
+              v.step === step &&
+              v.seed === seed &&
+              (source === "all" || v.metadata.source === source),
+          )
+          .sort((a, b) => a.metadata.id.localeCompare(b.metadata.id));
+        const count = data.videos.filter((v) => v.step === step).length;
+        $("compareLabel").hidden = step === 0;
+        $("validationNote").classList.toggle("trained", step > 0);
+        $("validationNote").textContent =
+          step === 0
+            ? `训练前基线 · 已同步 ${count}/${data.expected_validation} 条。这些视频使用原始模型，尚未经过本轮微调，不能当作训练后效果。`
+            : `训练后 Step ${step} · 已同步 ${count}/${data.expected_validation} 条。可勾选并排对照，在同片段、同种子下比较清晰度、运动和背景保持。`;
+        const key = JSON.stringify([
+          step,
+          seed,
+          source,
+          paired,
+          rows.map((v) => [v.directory, v.comparison]),
+        ]);
+        if (videoKey === key) return;
+        videoKey = key;
+        $("videos").innerHTML = rows.length
+          ? rows
+              .map((v) => {
+                const m = v.metadata,
+                  base = data.videos.find(
+                    (b) =>
+                      b.step === 0 && b.seed === seed && b.metadata.id === m.id,
+                  );
+                const player = (item, label) =>
+                  `<div class="video-cell"><em>${label}</em><video controls playsinline muted preload="metadata" aria-label="${esc(m.id + " " + label)}" src="${url(item.directory, "generated.mp4")}"></video></div>`;
+                const delta =
+                  step > 0 &&
+                  base &&
+                  Number.isFinite(v.psnr) &&
+                  Number.isFinite(base.psnr)
+                    ? ` · 相对基线 ${v.psnr - base.psnr >= 0 ? "+" : ""}${(v.psnr - base.psnr).toFixed(2)} dB`
+                    : "";
+                return `<article class="video-card"><div class="video-title"><div><b>${esc(m.group)}</b><small>${esc(m.pair_id.split("__").at(-1))} · 起始帧 ${m.start} · ${m.valid} 个有效帧</small></div><span class="dataset">${esc(m.source.toUpperCase())}</span></div><div class="video-area ${paired && base ? "paired" : ""}">${paired && base ? player(base, "Step 0 · 基线") : ""}${player(v, step ? "Step " + step : "Step 0 · 基线")}</div><div class="video-foot"><span>PSNR ${num(v.psnr, 2)} dB${delta}</span>${paired && base ? '<button class="play-pair">同步播放</button>' : v.comparison ? `<a href="${url(v.directory, "comparison.mp4")}" target="_blank" rel="noopener">实拍 / Proxy / 生成 ↗</a>` : `<a href="${url(v.directory, "generated.mp4")}" target="_blank" rel="noopener">打开视频 ↗</a>`}</div></article>`;
+              })
+              .join("")
+          : '<div class="empty">该检查点的这一组视频尚未同步完成。生成完成后会自动出现在这里。</div>';
+        document.querySelectorAll(".play-pair").forEach((button) => {
+          const clips = [
+            ...button.closest("article").querySelectorAll("video"),
+          ];
+          button.onclick = () => {
+            const playing = clips.some((v) => !v.paused);
+            clips.forEach((v) => {
+              if (playing) v.pause();
+              else {
+                v.currentTime = 0;
+                v.play().catch(() => {});
+              }
+            });
+            button.textContent = playing ? "同步播放" : "暂停对照";
+          };
+        });
+      }
+      async function refresh() {
+        if (fetching) return;
+        fetching = true;
+        $("refreshButton").disabled = true;
+        try {
+          const response = await fetch("snapshot.json?t=" + Date.now(), {
+            cache: "no-store",
+          });
+          if (!response.ok) throw Error("HTTP " + response.status);
+          data = await response.json();
+          loadError = "";
+          render();
+        } catch (e) {
+          loadError =
+            "暂时无法读取状态数据。请确认本地网页服务与同步程序仍在运行。";
+          $("syncWarning").style.display = "block";
+          $("syncWarning").textContent = loadError;
+          $("status").classList.add("bad");
+          $("status").lastElementChild.textContent = "状态待确认";
+        } finally {
+          fetching = false;
+          $("refreshButton").disabled = false;
+        }
+      }
+      $("refreshButton").onclick = refresh;
+      document.querySelectorAll("[data-range]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            range = +b.dataset.range;
+            document
+              .querySelectorAll("[data-range]")
+              .forEach((x) => x.classList.toggle("active", x === b));
+            if (data) {
+              chart("lossChart", "loss", "#27654c");
+              chart("gradChart", "grad_norm", "#ab572e");
+            }
+          }),
+      );
+      document.querySelectorAll("[data-source]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            source = b.dataset.source;
+            document
+              .querySelectorAll("[data-source]")
+              .forEach((x) => x.classList.toggle("active", x === b));
+            if (data) renderVideos();
+          }),
+      );
+      $("checkpoint").onchange = () => {
+        checkpointTouched = true;
+        renderVideos();
+      };
+      $("seed").onchange = $("compare").onchange = () => renderVideos();
+      refresh();
+      setInterval(refresh, 15000);
+      setInterval(freshness, 5000);
+    </script>
+  </body>
+</html>

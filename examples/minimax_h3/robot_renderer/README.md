@@ -207,3 +207,24 @@ records its explicit path and SHA256 in the qualification artifact. Adding DeCFG
 changes the training recipe and needs matched generation comparisons; it is not
 proof of improved perceptual quality. Historical124-frame/20-step results cannot
 be compared numerically to158-frame/50-step outputs without a shared evaluation protocol.
+
+## Read-only training dashboard
+
+Run `monitor.py` on the machine serving the results page. It uses existing SSH
+aliases to read all four nodes once per minute, mirrors validation media with
+rsync, and writes `index.html` and an atomic `snapshot.json` under `--out`.
+It does not import the training model or modify remote training files/processes.
+The local page reads the snapshot every 15 seconds, flags stale/disconnected data,
+and supports checkpoint/source/seed filters and matched step0 comparisons.
+
+```bash
+python -m examples.minimax_h3.robot_renderer.monitor \
+  --hosts node3 node4 node5 node6 \
+  --remote-root /data/renderer-run --out /local/results/live
+python -m http.server 8789 --bind 127.0.0.1 --directory /local/results
+```
+
+Open `http://127.0.0.1:8789/live/`. Use a range-capable HTTP server for video
+seeking. `--once` collects one snapshot; otherwise keep the monitor running.
+The browser shows Beijing time. Checkpoint0 is explicitly labelled untrained;
+PSNR differences are supporting metrics, not a claim of perceptual improvement.
