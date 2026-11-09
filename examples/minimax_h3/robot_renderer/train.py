@@ -22,6 +22,7 @@ from .decfg import decfg_mode
 from .distributed import average_gradients, clip_gradients, primary, setup
 from .encode import Decoder
 from .media import read_index, read_video, resample, write_video
+from .metrics import atomic_json
 from .model import adapter_parameters, configure_training_memory, load_model
 from .runtime import NativeRuntime, move, training_inputs
 from .sampling import Samples, validation_rows
@@ -79,7 +80,7 @@ def validate(model, runtime, model_path, rows, cache, out, update, dp_rank, dp_s
                 real = resample(source, pts, (metadata["start"] + np.arange(metadata["valid"])) / config.fps)
                 error = (np.asarray(frames, dtype=np.float32) - np.asarray(real, dtype=np.float32)) / 255
                 psnr = float(np.mean(-10 * np.log10(np.maximum((error ** 2).mean((1, 2, 3)), 1e-12))))
-                (folder / "metrics.json").write_text(json.dumps({"psnr": psnr, "seed": seed, "metadata": metadata}, indent=2))
+                atomic_json(folder / "metrics.json", {"psnr": psnr, "seed": seed, "metadata": metadata})
     if dist.is_initialized():
         dist.barrier()
     del decoder

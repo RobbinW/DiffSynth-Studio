@@ -738,6 +738,11 @@
           transition: none;
         }
       }
+      .metric-table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+      .metric-table th,.metric-table td { padding:12px 16px; text-align:right; border-bottom:1px solid #ddd9d0; white-space:nowrap; }
+      .metric-table th:first-child,.metric-table td:first-child { text-align:left; }
+      .metric-table th { font-size:12px; color:#666; }
+      .metric-table tr.metric-best { background:#e6efdf; }
     </style>
   </head>
   <body>
@@ -864,6 +869,17 @@
           <div><span>输出</span>158 帧 / 24 fps</div>
           <a href="#settings">完整配置 ↗</a>
         </div>
+        <section id="metricHistory">
+          <div class="section-head"><div><h2>Checkpoint 指标</h2>
+          <div class="sub">固定验证集 · RGB MAE ↓ / PSNR ↑ / SSIM ↑</div></div>
+          <a href="metrics_history.csv" download>下载 CSV ↗</a></div>
+          <p class="context-note" id="metricTrend">正在读取指标…</p>
+          <div style="overflow-x:auto"><table class="metric-table">
+          <thead><tr><th>Step</th><th>已评估</th><th>RGB MAE ↓</th><th>PSNR ↑</th><th>SSIM ↑</th><th>RGB RMSE ↓</th></tr></thead>
+          <tbody id="metricRows"></tbody></table></div>
+          <p class="context-note">MAE / RMSE 使用 RGB [0,1]。统一对保存的视频计算，只统计有效帧；完整的 24 条结果才纳入 checkpoint 总均值。按片段和种子等权平均，未评估的临时 checkpoint 显示为待评估。
+          <a href="metrics_history.json" target="_blank">完整定义、数据集分项与逐片段结果 ↗</a></p>
+        </section>
         <section id="validation">
           <div class="section-head">
             <div>
@@ -1193,6 +1209,7 @@
           $("checkpoint").value =
             checkpointTouched && steps.includes(+old) ? old : steps[0];
         }
+        renderMetricHistory();
         $("validationSummary").textContent =
           `每次 ${data.expected_validation || 24} 条视频 · 8 个固定片段 × 3 个随机种子`;
         const settings = [
@@ -1218,6 +1235,19 @@
         renderVideos();
         freshness();
       }
+      function renderMetricHistory() {
+        const history = data.metric_history || [];
+        const complete = history.filter(r => r.status === "complete");
+        const best = complete.reduce((a,b) => !a || b.metrics.psnr > a.metrics.psnr ? b : a, null);
+        const latest = complete.at(-1), previous = complete.at(-2);
+        $("metricRows").innerHTML = [...history].reverse().map(r => {
+          const m = r.metrics;
+          return `<tr class="${r === best ? "metric-best" : ""}"><td><a href="validation/step_${String(r.step).padStart(6,"0")}/metrics_summary.json" target="_blank">${r.step}</a>${r === best ? " · 最高 PSNR" : ""}</td><td>${r.count}/${r.expected} ${r.status === "complete" ? "" : r.count ? "补算中" : "待评估"}</td><td>${num(m.rgb_mae,4)}</td><td>${num(m.psnr,3)}</td><td>${num(m.ssim,4)}</td><td>${num(m.rgb_rmse,4)}</td></tr>`;
+        }).join("");
+        $("metricTrend").textContent = latest && previous
+          ? `最近完整评估 ${previous.step} → ${latest.step}：MAE ${(latest.metrics.rgb_mae-previous.metrics.rgb_mae).toFixed(4)}，PSNR ${(latest.metrics.psnr-previous.metrics.psnr).toFixed(3)} dB，SSIM ${(latest.metrics.ssim-previous.metrics.ssim).toFixed(4)}。绿色行仅表示最高 PSNR，不代表所有视觉效果最好。`
+          : "正在补齐同一口径的历史指标；不将未完成的结果作为趋势结论。";
+      }
       function renderVideos() {
         const step = +$("checkpoint").value,
           seed = +$("seed").value,
@@ -1242,7 +1272,7 @@
           seed,
           source,
           paired,
-          rows.map((v) => [v.directory, v.comparison]),
+          rows.map((v) => [v.directory, v.comparison, v.metrics_computed_at]),
         ]);
         if (videoKey === key) return;
         videoKey = key;
@@ -1259,11 +1289,12 @@
                 const delta =
                   step > 0 &&
                   base &&
+                  v.metric_protocol === base.metric_protocol &&
                   Number.isFinite(v.psnr) &&
                   Number.isFinite(base.psnr)
                     ? ` · 相对基线 ${v.psnr - base.psnr >= 0 ? "+" : ""}${(v.psnr - base.psnr).toFixed(2)} dB`
                     : "";
-                return `<article class="video-card"><div class="video-title"><div><b>${esc(m.group)}</b><small>${esc(m.pair_id.split("__").at(-1))} · 起始帧 ${m.start} · ${m.valid} 个有效帧</small></div><span class="dataset">${esc(m.source.toUpperCase())}</span></div><div class="video-area ${paired && base ? "paired" : ""}">${paired && base ? player(base, "Step 0 · 基线") : ""}${player(v, step ? "Step " + step : "Step 0 · 基线")}</div><div class="video-foot"><span>PSNR ${num(v.psnr, 2)} dB${delta}</span>${paired && base ? '<button class="play-pair">同步播放</button>' : v.comparison ? `<a href="${url(v.directory, "comparison.mp4")}" target="_blank" rel="noopener">实拍 / Proxy / 生成 ↗</a>` : `<a href="${url(v.directory, "generated.mp4")}" target="_blank" rel="noopener">打开视频 ↗</a>`}</div></article>`;
+                return `<article class="video-card"><div class="video-title"><div><b>${esc(m.group)}</b><small>${esc(m.pair_id.split("__").at(-1))} · 起始帧 ${m.start} · ${m.valid} 个有效帧</small></div><span class="dataset">${esc(m.source.toUpperCase())}</span></div><div class="video-area ${paired && base ? "paired" : ""}">${paired && base ? player(base, "Step 0 · 基线") : ""}${player(v, step ? "Step " + step : "Step 0 · 基线")}</div><div class="video-foot"><span>${v.metric_protocol ? `MAE ${num(v.rgb_mae, 4)} · PSNR ${num(v.psnr, 2)} dB · SSIM ${num(v.ssim, 4)}` : `压缩前 PSNR ${num(v.psnr, 2)} dB · 等待补算`}${delta}</span>${paired && base ? '<button class="play-pair">同步播放</button>' : v.comparison ? `<a href="${url(v.directory, "comparison.mp4")}" target="_blank" rel="noopener">实拍 / Proxy / 生成 ↗</a>` : `<a href="${url(v.directory, "generated.mp4")}" target="_blank" rel="noopener">打开视频 ↗</a>`}</div></article>`;
               })
               .join("")
           : '<div class="empty">该检查点的这一组视频尚未同步完成。生成完成后会自动出现在这里。</div>';

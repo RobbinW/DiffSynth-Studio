@@ -53,7 +53,7 @@ real frames are never used to continue the video.
 Use an H3-compatible Diffusers checkout containing `MiniMaxH3Transformer3DModel`
 and its modular pipelines. The API used here corresponds to Diffusers revision
 `90b4e34e79a86ec5e7f2437634fe95ecd2108796`; PyTorch2.10 was used for DCU checks.
-Additional packages: `accelerate`, `safetensors`, `numpy`, `Pillow`, `av`.
+Additional packages: `accelerate`, `safetensors`, `numpy`, `Pillow`, `av`, `scipy`.
 The example is a namespace package; run the commands from the repository root.
 
 The model directory has `transformer_ref`, `text_encoder`, `processor`, `vae`
@@ -242,3 +242,34 @@ Other data replicas write `train_dp*.jsonl`.
 Use `--resume /path/to/checkpoint --skip-initial-validation` for a maintenance
 restart without repeating an unscheduled validation. Optimizer step and RNG are
 restored; checkpoint/test steps100/250/500 and every500 remain unchanged.
+
+
+## Checkpoint RGB metrics
+
+The cluster launcher starts one asynchronous CPU video evaluator per node. It
+never runs a model forward, takes GPU memory, or offloads training tensors. For a
+manual launch (or to backfill an already running job), start this on each node:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python -m examples.minimax_h3.robot_renderer.metrics \
+  --run /runs/robot-h3 --fps 24 --watch
+```
+
+Every completed validation clip gets RGB MAE, frame-mean PSNR, RGB SSIM and
+frame-mean RMSE in `metrics.json`, plus `frame_metrics.json`. The versioned
+`rgb-decoded-v1` protocol compares decoded saved RGB video with the original real
+video at matched timestamps and resolution. It includes every valid frame
+(including the initial frame), excluding padded tails. MAE/RMSE use [0,1]; multiply
+by255 for 8-bit levels. PSNR has a120dB ceiling for zero error. SSIM uses11x11
+Gaussian windows (sigma1.5), K1=.01, K2=.03, population covariance, a5-pixel border
+crop and equal RGB-channel weighting, matching scikit-image's Gaussian SSIM.
+Pre-encoding historical PSNR is preserved separately as `psnr_preencode`.
+
+The monitor persists `metrics_history.json`, `metrics_history.csv` and each
+checkpoint's `validation/step_XXXXXX/metrics_summary.json`, including source means
+and per-clip/seed values. Only the exact full baseline panel qualifies as complete;
+partial means are separately labeled and never used in trend comparisons.
+Emergency checkpoints without generated validation are explicitly pending, not
+assigned metrics from another checkpoint. Full panels have24 samples (8 clips ×
+3 fixed seeds). These are development-validation measurements, not independent
+final-test claims. Pixel metrics do not measure motion/contact correctness alone.

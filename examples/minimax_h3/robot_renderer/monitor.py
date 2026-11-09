@@ -9,6 +9,11 @@ import shutil
 import subprocess
 import time
 
+if __package__:
+    from .metrics import save_summaries, summarize
+else:
+    from metrics import save_summaries, summarize
+
 
 REMOTE = r'''
 import json, pathlib, subprocess, sys, time
@@ -92,7 +97,7 @@ def main():
         try:
             command(['rsync', '-rt', '-e', 'ssh -o BatchMode=yes -o ConnectTimeout=10',
                      '--include=*/', '--include=generated.mp4', '--include=metrics.json',
-                     '--include=comparison.jpg', '--include=comparison.mp4', '--exclude=*',
+                     '--include=frame_metrics.json', '--include=comparison.jpg', '--include=comparison.mp4', '--exclude=*',
                      host + ':' + args.remote_root + '/run/validation/',
                      str(args.out / 'validation') + '/'])
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
@@ -115,6 +120,14 @@ def main():
                         last_update_at=lead.get('last_update_at'),
                         checkpoints=lead.get('checkpoints', []),
                         expected_validation=lead.get('expected_validation', 0), videos=videos)
+        remote_videos = [item for node in nodes for item in node.get('validations', [])]
+        expected_keys = {(v['metadata']['id'], v['seed']) for v in remote_videos if v['step'] == 0}
+        if len(expected_keys) != snapshot['expected_validation']:
+            expected_keys = set()
+        summaries = summarize(remote_videos, snapshot['checkpoints'], expected_keys)
+        snapshot['metric_history'] = summaries
+        save_summaries(args.out, summaries)
+        shutil.copyfile(Path(__file__).with_name('dashboard.html'), args.out / 'index.html')
         temporary = destination.with_suffix('.tmp')
         temporary.write_text(json.dumps(snapshot, ensure_ascii=False, allow_nan=False))
         temporary.replace(destination)

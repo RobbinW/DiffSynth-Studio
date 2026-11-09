@@ -155,6 +155,12 @@ def main():
                 "--out", cr+"/decfg_qualification.json",
                 *(["--adapter", args.resume+"/adapter.safetensors"] if args.resume else [])])
             run(["ssh", args.nodes[0], shlex.join(command)+" > "+shlex.quote(root+"/logs/decfg_qualification.log")+" 2>&1"])
+        for node in args.nodes:
+            evaluator = container(["-m", MODULE+".metrics", "--run", cr+"/run",
+                                   "--fps", str(config.fps), "--watch"],
+                                  OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
+            run(["ssh", node, "nohup " + shlex.join(evaluator) + " >> " +
+                 shlex.quote(root+"/logs/metrics.log") + " 2>&1 </dev/null & echo $!"])
         for rank, node in enumerate(args.nodes):
             resume = ["--resume", args.resume] if args.resume else []
             if args.skip_initial_validation:
