@@ -13,7 +13,7 @@ from .temporal import pad_tail
 
 
 class Encoder:
-    def __init__(self, model_path, device):
+    def __init__(self, model_path, device, text_devices=None):
         blocks = ModularPipeline.from_pretrained(model_path).blocks.get_workflow("ref2va").sub_blocks
         manager = ComponentsManager()
 
@@ -29,8 +29,11 @@ class Encoder:
         mapping = {"model.visual": device, "model.language_model.embed_tokens": device,
                    "model.language_model.norm": device, "model.language_model.rotary_emb": device,
                    "lm_head": device}
-        mapping.update({f"model.language_model.layers.{index}": device if index < 30 else "cpu"
-                        for index in range(len(encoder.model.language_model.layers))})
+        layers = len(encoder.model.language_model.layers)
+        layer_devices = ([text_devices[index * len(text_devices) // layers] for index in range(layers)]
+                         if text_devices else [device if index < 30 else "cpu" for index in range(layers)])
+        mapping.update({f"model.language_model.layers.{index}": owner
+                        for index, owner in enumerate(layer_devices)})
         dispatch_model(encoder, device_map=mapping, main_device=device, force_hooks=True)
         self.conditioned.vae.to(device)
         self.target = chain(("before_encode", "vae_encoder"))

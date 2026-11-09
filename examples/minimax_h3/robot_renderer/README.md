@@ -273,3 +273,44 @@ Emergency checkpoints without generated validation are explicitly pending, not
 assigned metrics from another checkpoint. Full panels have24 samples (8 clips ×
 3 fixed seeds). These are development-validation measurements, not independent
 final-test claims. Pixel metrics do not measure motion/contact correctness alone.
+
+
+### Full autoregressive checkpoint comparison
+
+`rollout` now persists every segment's generated video, lossless reference and last
+frame, reference-chain SHA256, and valid-frame metadata. Completed segments resume
+from their saved lossless boundary. Only the first reference comes from the real
+video; subsequent references come from generated frames. The full output removes
+one overlapping frame at each join. `--variants variants.json` accepts a JSON
+object mapping names to task-adapter paths (`null` selects the original base), so
+the same model load can compare frozen checkpoints on matching per-segment seeds.
+Outputs are under `<out>/<sample_id>/<variant>/`; `generated.mp4` is the full
+rollout, `segments/` holds partial results, and `result.json` records the recipe.
+
+A manifest may include `real` for asynchronous RGB metrics; it is used for
+scoring only. `reference` must be the first real frame. Prefer held-out full
+sequences and keep training groups out of the evaluation manifest. These long
+rollouts supplement, rather than replace, the fixed single-clip validation panel.
+
+For a four-card inference worker with two model/SP ranks, dedicate the other two
+cards to the conditioner (all text-encoder layers then execute on GPU):
+
+```bash
+torchrun --standalone --nproc_per_node=2 \
+  -m examples.minimax_h3.robot_renderer.rollout \
+  --model /models/MiniMax-H3 --manifest /data/full_sequences.json \
+  --out /runs/full_sequences --config /data/sp2.json \
+  --variants /data/variants.json --encoder-devices cuda:2 cuda:3
+```
+
+The SP2 config must set `sequence_parallel: 2`. Sampling remains158 frames at24fps,
+50 inference steps by default, native Ref2VA and training-only DeCFG disabled at
+inference. The60GiB per-process allocation ceiling leaves space for CUDA/NCCL;
+`memory_peaks.json` records allocator peaks per rank/device. A PyTorch version
+supporting mixed original parameter dtypes in FSDP2 is required (2.10 qualified).
+When a conditioner shares another rank's GPU, use `--memory-budgets budgets.json`
+to divide the physical card's budget across processes. For example,
+`{"0":{"0":60,"1":18,"2":60},"1":{"1":42}}` allows18GiB for rank0's
+conditioner and42GiB for rank1's model on visible GPU1, leaving the physical card
+headroom for non-allocator CUDA/NCCL memory. Per-process limits alone do not cap
+the sum of multiple processes; monitor physical memory as well.
